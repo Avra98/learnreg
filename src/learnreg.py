@@ -22,9 +22,6 @@ def make_opti(opts, W):
     return opti
 
 
-
-
-
 # problem setup
 
 def solve_lasso(A, y, W):
@@ -42,11 +39,11 @@ def setup_cvxpy_problem(m, n, k, batch_size=1):
     CvxpyLayer from Differentiable Convex Optimization Layers
     https://web.stanford.edu/~boyd/papers/pdf/diff_cvxpy.pdf
     """
-    A = cp.Parameter((m, n))
-    x = cp.Variable((n, batch_size))
-    z = cp.Variable((k, batch_size))
-    y = cp.Parameter((m, batch_size))
-    W = cp.Parameter((k, n))
+    A = cp.Parameter((m, n), name='A')
+    x = cp.Variable((n, batch_size), name='x')
+    z = cp.Variable((k, batch_size), name='z')
+    y = cp.Parameter((m, batch_size), name='y')
+    W = cp.Parameter((k, n), name='W')
     objective_fn = cp.sum_squares(A @ x - y) + cp.sum(cp.abs(z))
     constraints = [W @ x == z]
     problem = cp.Problem(cp.Minimize(objective_fn), constraints)
@@ -414,7 +411,7 @@ def optimize(D,bh,l):
     return x_l1.value
 
 
-def make_circulant(r):
+def create_circulant(r):
     A=torch.zeros(r.shape[0],r.shape[0])
     rn=r/torch.norm(r,2)
     for i in range(r.shape[0]):
@@ -422,7 +419,11 @@ def make_circulant(r):
     return A
 
 def TV_denoise(m,x1,y1,b_opt):
-    ##b_opt is the penalty strength, y1 is the noisy version of x1, xrec is the TV reconstructed denoise signal
+    """
+    b_opt is the penalty strength
+    y1 is the noisy version of x1
+    xrec is the TV reconstructed denoise signal
+    """
     tv=torch.zeros(m)
     tv[0]=1.0
     tv[1]=-1.0
