@@ -362,7 +362,78 @@ def show_W(W_0, W):
     fig, ax = plt.subplots(1, 2)
     ax[0].imshow(W_0)
     ax[0].set_title('W_0')
-
     ax[1].imshow(W)
     ax[1].set_title('W*')
-    fig.show()
+    fig.show()      
+          
+         
+def find_sign_pattern(z, threshold=1e-10):
+    """
+    z: (k,), tensor - D@x_opt
+
+    returns
+    S_0 (k_0, k) tensor - selection matrix
+    S_pm (k_{+-}, k) tensor - selection matrix
+    s (k_{+-},) tensor
+    """
+    is_zero = z.abs() < threshold  # boolean, (k,)
+    i=is_zero.reshape(is_zero.shape[0])
+    signs = torch.sign(z)  # {-1, 0, 1}, (k,)
+    s = signs[~i]  # {-1, 1}, (k_{+-})
+    I = torch.eye(len(z))
+    S_0 = I[i, :]
+    S_pm = I[~i, :]
+
+    return S_0, S_pm, s
+          
+def closed_form(S_0, S_pm, s, W, l, b):
+    W=W.float()
+    S_0=S_0.float()
+    S_pm=S_pm.float()
+    W_b=torch.matmul(S_0,W)
+    Wb=torch.matmul(S_pm,W)
+    W_bt=torch.transpose(W_b,0,1)
+    Wbt=torch.transpose(Wb,0,1)
+    s=s.float()
+    Pnull=torch.eye(W_b.shape[1])-(W_bt @ torch.pinverse(W_b @ W_bt) @ W_b)
+    temp= (b - l * Wbt @ s)
+    temp=temp.float()
+    beta=Pnull @ temp
+    return beta
+
+          
+def optimize(D,bh,l):
+    n=100
+    x_l1 = cp.Variable(shape=(n,1))
+    # Form objective.
+    obj = cp.Minimize(cp.norm(x_l1-bh,2)+l*cp.norm(D@x_l1, 1))
+    # Form and solve problem.
+    prob = cp.Problem(obj)
+    prob.solve()
+    #print("optimal objective value: {}".format(obj.value))
+    return x_l1.value
+
+          
+def make_circulant(r):
+    A=torch.zeros(r.shape[0],r.shape[0])
+    rn=r/torch.norm(r,2)
+    for i in range(r.shape[0]):
+        A[i,:]=torch.roll(rn,i)
+    return A          
+
+def TV denoise(m,x1,y1,b_opt): 
+    ##b_opt is the penalty strength, y1 is the noisy version of x1, xrec is the TV reconstructed denoise signal
+    tv=torch.zeros(m)
+    tv[0]=1.0
+    tv[1]=-1.0
+    TV=b_opt*create_circulant(tv)
+    xrec=optimize(TV,y1,1)
+    return xrec,src.MSE(x1,xrec)          
+          
+          
+          
+          
+          
+          
+
+    
