@@ -3,6 +3,7 @@ import torch
 import cvxpy as cp
 import matplotlib.pyplot as plt
 import collections
+import random
 
 
 from cvxpylayers.torch import CvxpyLayer
@@ -116,30 +117,26 @@ def make_data(n, m, sigma, train_size, val_size=0):
 
 
 def main(A, k, train, beta0,
-         opti_opts, num_steps, sigma=None,
+         opti_opts, num_steps,
          batch_size=1, val=None, val_interval=1, print_interval=1,
-         history_length=None, max_batch_size=64):
+         history_length=None, max_batch_size=None):
     """
     k : sparse code length
 
     train : NamedTupe with fields x and y
-            if None, new batches are generated online
     """
 
-    # todo: ideally we would not need to pass sigma,
-    # but this requires refactoring datasets (into torch Datasets maybe?)
+    batch_increment = 2  # add this on val fail
 
     # infer some problem specifics from parameters
     do_val = val is not None
-    gen_batches = train is None
     decrease_batch_size = history_length is not None
 
-    if not gen_batches:
-        train_size = train.x.shape[1]
-    else:
-        train_size = batch_size
-    assert train_size % batch_size == 0
+    train_size = train.x.shape[1]
+    assert batch_size <= train_size
 
+    if max_batch_size is None:
+        max_batch_size = train_size
 
     # setup
     m, n = A.shape
@@ -165,19 +162,18 @@ def main(A, k, train, beta0,
         best_loss = float('inf')
     val_fail = False
 
+    # setup batches
     batch_ind = 0
+    shuffled_inds = random.sample(range(train_size), train_size)
+
     print(f'{"step":6s}{"batch ind":12s}{"batch loss":15s}{"val loss":15s}')
     for step in range(num_steps):
-        # generate new batch if required
-        if gen_batches:
-            train = make_set(A, batch_size, sigma)
-
         # compute grad and take a opti step
         def closure():  # why "closure"? see https://pytorch.org/docs/stable/optim.html
             opti.zero_grad()
             batch_slice = slice(batch_ind, batch_ind+batch_size)
-            x_star = solve_batch(A, train.y[:, batch_slice], W)
-            loss = MSE(x_star, train.x[:, batch_slice])
+            x_star = solve_batch(A, train.y[:, shuffled_inds[batch_slice]], W)
+            loss = MSE(x_star, train.x[:, shuffled_inds[batch_slice]])
             loss.backward()
             last_loss[0] = loss.item()
             return loss
@@ -195,8 +191,8 @@ def main(A, k, train, beta0,
                     best_loss = val_loss
 
                 if best_loss not in val_history:
-                    if batch_size < max_batch_size:
-                        batch_size += 2
+                    if batch_size + batch_increment < max_batch_size:
+                        batch_size += batch_increment
                         _, solve_batch = setup_cvxpy_problem(m, n, k, batch_size)
                     val_fail = True
                     best_loss = float('inf')
@@ -214,7 +210,11 @@ def main(A, k, train, beta0,
                 print('')
 
         # update batch index for next step
-        batch_ind = (batch_ind + batch_size) % train_size
+        batch_ind += batch_size
+        if batch_ind + batch_size > train_size:
+            batch_ind = 0
+            shuffled_inds = random.sample(range(train_size), train_size)
+
 
     W.requires_grad_(False)
 
