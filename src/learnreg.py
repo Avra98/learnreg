@@ -364,9 +364,9 @@ def show_W(W_0, W):
     ax[0].set_title('W_0')
     ax[1].imshow(W)
     ax[1].set_title('W*')
-    fig.show()      
-          
-         
+    fig.show()
+
+
 def find_sign_pattern(z, threshold=1e-10):
     """
     z: (k,), tensor - D@x_opt
@@ -385,7 +385,7 @@ def find_sign_pattern(z, threshold=1e-10):
     S_pm = I[~i, :]
 
     return S_0, S_pm, s
-          
+
 def closed_form(S_0, S_pm, s, W, l, b):
     W=W.float()
     S_0=S_0.float()
@@ -401,7 +401,7 @@ def closed_form(S_0, S_pm, s, W, l, b):
     beta=Pnull @ temp
     return beta
 
-          
+
 def optimize(D,bh,l):
     n=100
     x_l1 = cp.Variable(shape=(n,1))
@@ -413,27 +413,19 @@ def optimize(D,bh,l):
     #print("optimal objective value: {}".format(obj.value))
     return x_l1.value
 
-          
+
 def make_circulant(r):
     A=torch.zeros(r.shape[0],r.shape[0])
     rn=r/torch.norm(r,2)
     for i in range(r.shape[0]):
         A[i,:]=torch.roll(rn,i)
-    return A          
+    return A
 
-def TV denoise(m,x1,y1,b_opt): 
+def TV_denoise(m,x1,y1,b_opt):
     ##b_opt is the penalty strength, y1 is the noisy version of x1, xrec is the TV reconstructed denoise signal
     tv=torch.zeros(m)
     tv[0]=1.0
     tv[1]=-1.0
     TV=b_opt*create_circulant(tv)
     xrec=optimize(TV,y1,1)
-    return xrec,src.MSE(x1,xrec)          
-          
-          
-          
-          
-          
-          
-
-    
+    return xrec,src.MSE(x1,xrec)

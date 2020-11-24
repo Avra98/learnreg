@@ -7,4 +7,5 @@ dependencies:
   - matplotlib=3.3.1
   - pip:
       - -e src
+      - cvxpylayers==0.1.4
 
