@@ -116,7 +116,7 @@ def make_data(n, m, sigma, train_size, val_size=0):
     return train, val, A
 
 
-def main(A, k, train, beta0,
+def main(A, k, W_type, train, beta0,
          opti_opts, num_steps,
          batch_size=1, val=None, val_interval=1, print_interval=1,
          history_length=None, max_batch_size=None):
@@ -146,14 +146,26 @@ def main(A, k, train, beta0,
         _, solve_val = setup_cvxpy_problem(m, n, k, val_size)
 
     _, solve_batch = setup_cvxpy_problem(m, n, k, batch_size)
-    W0 = torch.randn(k, n)
-    W0 = beta0 * W0
+
+    if W_type == 'full':
+        params0 = beta0 * torch.randn(k, n)
+        def make_W(params):
+            return params
+    elif W_type == 'conv':
+        params0 = beta0 * torch.randn(n)
+        def make_W(params):
+            pad = n-1 # always want to add 2n-2 values
+            params = torch.nn.functional.pad(params, (pad, pad))
+            return torch.nn.functional.unfold(params.view(1, 1, -1, 1), (n, 1)).squeeze().T
+    else:
+        raise ValueError(W_type)
+
+    params = params0.clone()
+    params.requires_grad_(True)
+    W = make_W(params)
 
     # main loop
-    W = W0.clone()
-    W.requires_grad_(True)
-
-    opti = make_opti(opti_opts, W)
+    opti = make_opti(opti_opts, params)
 
     last_loss = [None]  # use this list to get losses out of the closure
 
@@ -178,6 +190,7 @@ def main(A, k, train, beta0,
             last_loss[0] = loss.item()
             return loss
         opti.step(closure)
+        W = make_W(params)
 
         # do validation
         if do_val and step % val_interval == 0 or step == num_steps-1:
@@ -216,9 +229,7 @@ def main(A, k, train, beta0,
             shuffled_inds = random.sample(range(train_size), train_size)
 
 
-    W.requires_grad_(False)
-
-    return W, W0
+    return W.detach(), make_W(params0)
 
 
 
