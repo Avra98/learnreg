@@ -280,6 +280,12 @@ def permute_for_display(W):
     #corr = np.fft.irfft( np.conj(FW[0:1, :]) * FW, axis=1)
 
 
+def find_optimal_beta(W, y, x_GT, upper, lower=0):
+    def J(beta):
+        return MSE(optimize(W, y, beta), x_GT)
+
+    a, b = min_golden(J, lower, upper)
+    return (a+b)/2
 
 def min_golden(f, a, b, tol=1e-5):
     '''
@@ -302,7 +308,7 @@ def min_golden(f, a, b, tol=1e-5):
     >>> print (c,d)
     (1.9999959837979107, 2.0000050911830893)
 
-    adapted from https://en.wikipedia.org/wiki/Golden-section_search
+    adapted from https://en.wikipedia.org/wpiki/Golden-section_search
     '''
 
     invphi = (np.sqrt(5) - 1) / 2  # 1/phi
@@ -395,6 +401,11 @@ def find_sign_pattern(z, threshold=1e-10):
     return S_0, S_pm, s
 
 def closed_form(S_0, S_pm, s, W, l, b):
+    """
+    implemention of (XXX) from "XXXXX" Tibshi...
+    https://arxiv.org/pdf/1805.07682.pdf
+
+    """
     W=W.float()
     S_0=S_0.float()
     S_pm=S_pm.float()
@@ -409,22 +420,25 @@ def closed_form(S_0, S_pm, s, W, l, b):
     beta=Pnull @ temp
     return beta
 
+def compute_loss(x, y, beta, W):
+    return MSE(x, y) + beta * torch.sum(torch.abs((W@x)))
+
 
 def optimize(D,bh,l):
     n=100
     x_l1 = cp.Variable(shape=(n,1))
     # Form objective.
-    obj = cp.Minimize(cp.norm(x_l1-bh,2)+l*cp.norm(D@x_l1, 1))
+    obj = cp.Minimize( 0.5*cp.sum_squares(x_l1-bh) + l*cp.norm(D@x_l1, 1))
     # Form and solve problem.
     prob = cp.Problem(obj)
     prob.solve()
     #print("optimal objective value: {}".format(obj.value))
-    return x_l1.value
+    return torch.tensor(x_l1.value, dtype=torch.float)
 
 
 def create_circulant(r):
     A=torch.zeros(r.shape[0],r.shape[0])
-    rn=r/torch.norm(r,2)
+    rn=r/torch.norm(r,2)  # normalize rows
     for i in range(r.shape[0]):
         A[i,:]=torch.roll(rn,i)
     return A
