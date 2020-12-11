@@ -424,11 +424,11 @@ def compute_loss(x, y, beta, W):
     return MSE(x, y) + beta * torch.sum(torch.abs((W@x)))
 
 
-def optimize(D,bh,l):
-    n=100
+def optimize(D,bh,beta):
+    n = D.shape[1]
     x_l1 = cp.Variable(shape=(n,1))
     # Form objective.
-    obj = cp.Minimize( 0.5*cp.sum_squares(x_l1-bh) + l*cp.norm(D@x_l1, 1))
+    obj = cp.Minimize( 0.5*cp.sum_squares(x_l1-bh) + beta*cp.norm(D@x_l1, 1))
     # Form and solve problem.
     prob = cp.Problem(obj)
     prob.solve()
