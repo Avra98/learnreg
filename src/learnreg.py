@@ -400,6 +400,26 @@ def find_sign_pattern(z, threshold=1e-10):
 
     return S_0, S_pm, s
 
+def find_signs_alt(x, W, threshold=1e-18):
+    """
+    given x* and W, find the necessary sign matrices:
+    W_0, W_pm, and s
+    """
+    Wx = W @ x
+    is_zero = (Wx.abs() < threshold).squeeze()
+    W0 = W[is_zero, :]
+    Wpm = W[~is_zero, :]
+    s = (Wpm @ x).sign()
+
+    return W0, Wpm, s
+
+def closed_form_alt(W0, Wpm, s, y, beta):
+    y_term = y - beta * Wpm.T @ s
+    proj = W0.pinverse() @ W0
+    print(proj)
+    return y_term - proj @ y_term
+
+
 def closed_form(S_0, S_pm, s, W, l, b):
     """
     implemention of (XXX) from "XXXXX" Tibshi...
@@ -414,13 +434,14 @@ def closed_form(S_0, S_pm, s, W, l, b):
     W_bt=torch.transpose(W_b,0,1)
     Wbt=torch.transpose(Wb,0,1)
     s=s.float()
-    Pnull=torch.eye(W_b.shape[1])-(W_bt @ torch.pinverse(W_b @ W_bt) @ W_b)
+    proj = (W_bt @ torch.pinverse(W_b @ W_bt) @ W_b)
+    Pnull=torch.eye(W_b.shape[1])-proj
     temp= (b - l * Wbt @ s)
-    temp=temp.float()
     beta=Pnull @ temp
     return beta
 
 def compute_loss(x, y, beta, W):
+    assert x.shape == y.shape
     return MSE(x, y) + beta * torch.sum(torch.abs((W@x)))
 
 
