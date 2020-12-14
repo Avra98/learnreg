@@ -35,7 +35,7 @@ def solve_lasso(A, y, W):
 
 def setup_cvxpy_problem(m, n, k, batch_size=1):
     """
-    argmin_x ||Ax - y||_2^2 + ||Wx||_1
+    argmin_x 1/2 * ||Ax - y||_2^2 + ||Wx||_1
 
     CvxpyLayer from Differentiable Convex Optimization Layers
     https://web.stanford.edu/~boyd/papers/pdf/diff_cvxpy.pdf
@@ -45,7 +45,7 @@ def setup_cvxpy_problem(m, n, k, batch_size=1):
     z = cp.Variable((k, batch_size), name='z')
     y = cp.Parameter((m, batch_size), name='y')
     W = cp.Parameter((k, n), name='W')
-    objective_fn = cp.sum_squares(A @ x - y) + cp.sum(cp.abs(z))
+    objective_fn = 0.5 * cp.sum_squares(A @ x - y) + cp.sum(cp.abs(z))
     constraints = [W @ x == z]
     problem = cp.Problem(cp.Minimize(objective_fn), constraints)
 
