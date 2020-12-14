@@ -19,9 +19,9 @@ train, val, A = learnreg.make_data(
 # x_tv = learnreg.TV_recon(val, A, beta='auto')  # todo: write this function
 
 W, W0 = learnreg.main(
-    A, k=100, train=train,  beta0=1e-1, val=val,
+    A, k=100, W_type='full', train=train,  beta0=1e-1, val=val,
     batch_size=1, opti_opts=('SGD', dict(lr=learning_rate)),
-    num_steps=10000, val_interval=10, print_interval=10,
+    num_steps=1000, val_interval=10, print_interval=10,
     history_length=20, max_batch_size=64)
 
 # show results

@@ -216,6 +216,7 @@ def main(A, k, W_type, train, beta0,
         if do_print or val_fail:
             print(f'{step:<6d}{batch_ind:<12d}'
                   f'{last_loss[0]:<15.3e}{val_loss:<15.3e}', end='')
+            print(torch.matrix_rank(W))
             if val_fail:
                 print(f'validation fail -> batch_size={batch_size}')
                 val_fail = False

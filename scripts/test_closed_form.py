@@ -7,10 +7,10 @@ import torch
 import learnreg
 
 # parameters
-n = 50 # signal length, W is n x n
+n = 5 # signal length, W is n x n
 sigma = 0.25
 sign_thresh = 1e-18
-beta = 0.5  # fine when beta is 0.5, breaks when 1.0 or higher
+beta = 1.5
 SEED = 0
 
 # init
@@ -21,8 +21,8 @@ tv=torch.zeros(n)
 tv[0]=1.0
 tv[1]=-1.0
 W = learnreg.create_circulant(tv)
-#W += torch.rand_like(W)
-
+W = W[:-1,:]  # W being rank deficient causes problems for closed form
+# removing this row fixes that
 
 # make dataset
 A = torch.eye(n,n)
@@ -34,7 +34,7 @@ J = lambda x : learnreg.compute_loss(x, y, beta, W)
 x_cvxpy = learnreg.optimize(W, y, beta)
 
 # solve with pylayers
-_, solve_lasso = learnreg.setup_cvxpy_problem(n, n, n)
+_, solve_lasso = learnreg.setup_cvxpy_problem(n, n, W.shape[0])
 x_pylayers = solve_lasso(A, y, beta * W)
 
 # solve in closed form
