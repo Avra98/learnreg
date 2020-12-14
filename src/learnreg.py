@@ -4,6 +4,7 @@ import cvxpy as cp
 import matplotlib.pyplot as plt
 import collections
 import random
+import functools
 
 
 from cvxpylayers.torch import CvxpyLayer
@@ -13,71 +14,61 @@ Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 
 #
 
-def make_opti(opts, W):
-    if opts[0] == 'LBFGS':
-        opti = torch.optim.LBFGS((W,), **opts[1])
-    elif opts[0] == 'SGD':
-        opti = torch.optim.SGD((W,), **opts[1])
+def make_opti(algo, W, opts):
+    if algo == 'LBFGS':
+        opti = torch.optim.LBFGS((W,), **opts)
+    elif algo == 'SGD':
+        opti = torch.optim.SGD((W,), **opts)
     else:
-        raise ValueError(opts[0])
+        raise ValueError(algo)
     return opti
 
 
 # problem setup
 
-def solve_lasso(A, y, W):
-    m, n = A.shape
+def solve_lasso(A, y, beta, W):
     k = W.shape[0]
     num = y.shape[1]
-    _, solve = setup_cvxpy_problem(m, n, k, num)
+    problem, params = setup_cvxpy_problem(A, k, num)
+    params['y'].value = y.numpy()
+    params['beta'].value = beta
+    params['W'].value = W.numpy()
 
-    return solve(A, y, W)
+    problem.solve()
 
-def setup_cvxpy_problem(m, n, k, batch_size=1):
+    return torch.tensor(params['x'].value)
+
+@functools.lru_cache  # caching because making the problem object is slow
+def setup_cvxpy_problem(A, k, batch_size=1):
     """
-    argmin_x 1/2 * ||Ax - y||_2^2 + ||Wx||_1
+    sets up a cvxpy Problem representing
+    argmin_x 1/2||Ax - y||_2^2 + beta||Wx||_1
+    where A and beta are fixed and
+    y and W are left as free parameters
 
-    CvxpyLayer from Differentiable Convex Optimization Layers
-    https://web.stanford.edu/~boyd/papers/pdf/diff_cvxpy.pdf
+    A: m x n
+    x: n x batch_size
+    y: m x batch_size
+
+    beta: scalar
+    W: k x n
     """
-    A = cp.Parameter((m, n), name='A')
+    m, n = A.shape
     x = cp.Variable((n, batch_size), name='x')
-    z = cp.Variable((k, batch_size), name='z')
     y = cp.Parameter((m, batch_size), name='y')
+    beta = cp.Parameter(name='beta', nonneg=True)
     W = cp.Parameter((k, n), name='W')
-    objective_fn = 0.5 * cp.sum_squares(A @ x - y) + cp.sum(cp.abs(z))
-    constraints = [W @ x == z]
-    problem = cp.Problem(cp.Minimize(objective_fn), constraints)
+    z = cp.Variable((k, batch_size), name='z')
+    objective_fn = 0.5 * cp.sum_squares(A @ x - y) + beta*cp.sum(cp.abs(z))
+    constraint = [W @ x == z]
+    problem = cp.Problem(cp.Minimize(objective_fn), constraint)
 
-    layer = CvxpyLayer(
-        problem, parameters=[A, y, W], variables=[x])
+    params = {'y':y,
+              'beta':beta,
+              'W':W,
+              'x':x}
 
-    def solve_lasso(A, y, W):
-        return layer(A, y, W)[0]  # because layer returns a list
-
-    return problem, solve_lasso
-
-def setup_conv_problem(m, n, filter_length):
-    raise ValueError('careful, this code does not seem to work, solutions are always zero')
-    """
-    argmin_x ||Ax - y||_2^2 + ||W * x||_1
-    """
-    A = cp.Parameter((m, n))
-    x = cp.Variable((n, 1))
-    z = cp.Variable((n+filter_length-1, 1))
-    y = cp.Parameter((m, 1))
-    W = cp.Parameter((filter_length, 1))
-    objective_fn = cp.sum_squares(A @ x - y) + 1e-4 * cp.sum(cp.abs(z))
-    constraints = [z == cp.conv(W, x)]
-    problem = cp.Problem(cp.Minimize(objective_fn), constraints)
-
-    layer = CvxpyLayer(
-        problem, parameters=[A, y, W], variables=[x])
-
-    def solve_lasso(A, y, W):
-        return layer(A, y, W)[0]  # because layer returns a list
-
-    return problem, solve_lasso
+    return problem, params
 
 
 def make_signal(n, jump_freq=0.1, num_signals=1):
@@ -94,30 +85,14 @@ def make_measurement(x, A, sigma):
     return y
 
 
-def make_set(A, num_signals, sigma):
+def make_dataset(A, num_signals, sigma):
     x = make_signal(A.shape[1], num_signals=num_signals)
     y = make_measurement(x, A, sigma)
-
     return Dataset(x=x, y=y)
 
 
-def make_data(n, m, sigma, train_size, val_size=0):
-    do_val = val_size > 0
-
-    A = torch.eye(m, n)
-
-    train = make_set(A, train_size, sigma)
-
-    if do_val:
-        val = make_set(A, val_size, sigma)
-    else:
-        val = None
-
-    return train, val, A
-
-
-def main(A, k, W_type, train, beta0,
-         opti_opts, num_steps,
+def main(A, beta, W0, train,
+         opti_type, opti_opts, num_steps,
          batch_size=1, val=None, val_interval=1, print_interval=1,
          history_length=None, max_batch_size=None):
     """
@@ -138,34 +113,11 @@ def main(A, k, W_type, train, beta0,
     if max_batch_size is None:
         max_batch_size = train_size
 
-    # setup
-    m, n = A.shape
-
-    if do_val:
-        val_size = val.x.shape[1]
-        _, solve_val = setup_cvxpy_problem(m, n, k, val_size)
-
-    _, solve_batch = setup_cvxpy_problem(m, n, k, batch_size)
-
-    if W_type == 'full':
-        params0 = beta0 * torch.randn(k, n)
-        def make_W(params):
-            return params
-    elif W_type == 'conv':
-        params0 = beta0 * torch.randn(n)
-        def make_W(params):
-            pad = n-1 # always want to add 2n-2 values
-            params = torch.nn.functional.pad(params, (pad, pad))
-            return torch.nn.functional.unfold(params.view(1, 1, -1, 1), (n, 1)).squeeze().T
-    else:
-        raise ValueError(W_type)
-
-    params = params0.clone()
-    params.requires_grad_(True)
-    W = make_W(params)
+    W = W0.clone()
+    W.requires_grad_(True)
 
     # main loop
-    opti = make_opti(opti_opts, params)
+    opti = make_opti(opti_type, opti_opts, W)
 
     last_loss = [None]  # use this list to get losses out of the closure
 
@@ -281,9 +233,10 @@ def permute_for_display(W):
     #corr = np.fft.irfft( np.conj(FW[0:1, :]) * FW, axis=1)
 
 
-def find_optimal_beta(W, y, x_GT, upper, lower=0):
+def find_optimal_beta(A, x_GT, y, beta, W, upper, lower=0):
     def J(beta):
-        return MSE(optimize(W, y, beta), x_GT)
+        x_star = solve_lasso(A, y, beta, W)
+        return MSE(x_star, x_GT)
 
     a, b = min_golden(J, lower, upper)
     return (a+b)/2
@@ -458,12 +411,31 @@ def optimize(D,bh,beta):
     return torch.tensor(x_l1.value, dtype=torch.float)
 
 
-def create_circulant(r):
-    A=torch.zeros(r.shape[0],r.shape[0])
-    rn=r/torch.norm(r,2)  # normalize rows
-    for i in range(r.shape[0]):
-        A[i,:]=torch.roll(rn,i)
-    return A
+def make_conv(h, n):
+    """
+    Return a matrix, H, that implements convolution of a length-n signal by h
+
+    if h is length-m, the length of the (valid) convoluation result
+    is n-m+1, so H has shape (n-m+1, n)
+
+    h = [1.0, -1.0], n = 4 ->
+    H =
+    [[-1, 1, 0, 0,],
+     [0, -1, 1, 0,],
+     [0, 0, -1, 1,]]
+
+    """
+    assert h.ndim == 1
+
+    m = len(h)
+    pad = n-m # adds to beginning and end
+    h_repeat = torch.nn.functional.unfold(
+        h.view(1, 1, -1, 1), (n, 1),
+        padding=(pad, 0))
+    return h_repeat[0].T.flip(1)
+
+def make_TV(n):
+    return make_conv(torch.tensor([1.0, -1.0]), n)
 
 def TV_denoise(m,x1,y1,b_opt):
     """
@@ -477,3 +449,13 @@ def TV_denoise(m,x1,y1,b_opt):
     TV=b_opt*create_circulant(tv)
     xrec=optimize(TV,y1,1)
     return xrec,src.MSE(x1,xrec)
+
+
+# deprecated, don't use ----------------------------
+def create_circulant(r):
+    raise DeprecationWarning('use make_conv instead')
+    A=torch.zeros(r.shape[0],r.shape[0])
+    rn=r/torch.norm(r,2)  # normalize rows
+    for i in range(r.shape[0]):
+        A[i,:]=torch.roll(rn,i)
+    return A
