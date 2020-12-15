@@ -11,29 +11,28 @@ import time
 import learnreg as lr
 
 n = 100  # signal length
-sigma = 5e-1
-learning_rate = 1e0
-
+sigma = 1e-1
+learning_rate = 1e-6
 # todo: longer validation interval, smaller max batch (67 gives memory error)
 
 A = torch.eye(n,n)
 
-train = lr.make_dataset(A, num_signals=2000, sigma=sigma)
-val   = lr.make_dataset(A, num_signals=1,    sigma=sigma)
+train = lr.make_dataset(A, num_signals=1, sigma=sigma)
+val   = lr.make_dataset(A, num_signals=10,    sigma=sigma)
 
 W0 = lr.make_TV(n)
+W0 = W0 + 0.001 * torch.randn_like(W0)
 
-beta = lr.find_optimal_beta(A, val.x, val.y, beta, W, upper=2.0)
+beta = lr.find_optimal_beta(A, val.x, val.y, W0, upper=2)
 
-W = lr.main(A, beta, W0, train, val=val,
-    batch_size=1, opti_type='SGD', opti_opts=dict(lr=learning_rate),
-    num_steps=1000, val_interval=10, print_interval=10,
-    history_length=20, max_batch_size=64)
+W = lr.main(A, beta, W0, train,
+            batch_size=1, opti_type='SGD', opti_opts=dict(lr=learning_rate),
+            num_steps=100000, print_interval=100)
 
 # show results
 fig_name = 'reconstruction results'
 # try this W on another problem
-fig, ax = learnreg.solve_and_plot(A, val, W)
+fig, ax = lr.solve_and_plot(A, val, beta, W)
 ax.set_title('validation signal')
 
 

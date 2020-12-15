@@ -7,35 +7,28 @@ import torch
 import learnreg
 
 # parameters
-n = 5 # signal length, W is n x n
-sigma = 0.25
+n = 100 # signal length, W is n x n
+sigma = 1e-1
 sign_thresh = 1e-18
-beta = 1.5
 SEED = 0
 
 # init
 torch.manual_seed(SEED)  # make repeatable
 
 # make TV
-tv=torch.zeros(n)
-tv[0]=1.0
-tv[1]=-1.0
-W = learnreg.create_circulant(tv)
-W = W[:-1,:]  # W being rank deficient causes problems for closed form
-# removing this row fixes that
+W = lr.make_TV(n)
+W = W + 0.001 * torch.randn_like(W)
 
 # make dataset
 A = torch.eye(n,n)
-x, y = learnreg.make_set(A, num_signals=1, sigma=sigma)
+x, y = learnreg.make_dataset(A, num_signals=1, sigma=sigma)
+
+beta = lr.find_optimal_beta(A, x, y, W, upper=2)
 
 J = lambda x : learnreg.compute_loss(x, y, beta, W)
 
 # solve with cvxpy
 x_cvxpy = learnreg.optimize(W, y, beta)
-
-# solve with pylayers
-_, solve_lasso = learnreg.setup_cvxpy_problem(n, n, W.shape[0])
-x_pylayers = solve_lasso(A, y, beta * W)
 
 # solve in closed form
 z = W @ x_cvxpy
@@ -50,6 +43,5 @@ x_closed_alt = learnreg.closed_form_alt(W0, Wpm, s, y, beta)
 max_diff = (x_closed - x_cvxpy).abs().max()
 print(f'max abs difference: {max_diff}')
 print(f'J(x_cvxpy) = {J(x_cvxpy)}')
-print(f'J(x_pylayers) = {J(x_pylayers)}')
 print(f'J(x_closed) = {J(x_closed)}')
 print(f'J(x_closed_alt) = {J(x_closed_alt)}')

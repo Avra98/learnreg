@@ -36,7 +36,7 @@ def solve_lasso(A, y, beta, W):
 
     problem.solve()
 
-    return torch.tensor(params['x'].value)
+    return torch.tensor(params['x'].value, dtype=torch.float)
 
 @functools.lru_cache  # caching because making the problem object is slow
 def setup_cvxpy_problem(A, k, batch_size=1):
@@ -117,7 +117,7 @@ def main(A, beta, W0, train,
     W.requires_grad_(True)
 
     # main loop
-    opti = make_opti(opti_type, opti_opts, W)
+    opti = make_opti(opti_type, W, opti_opts)
 
     last_loss = [None]  # use this list to get losses out of the closure
 
@@ -136,17 +136,23 @@ def main(A, beta, W0, train,
         def closure():  # why "closure"? see https://pytorch.org/docs/stable/optim.html
             opti.zero_grad()
             batch_slice = slice(batch_ind, batch_ind+batch_size)
-            x_star = solve_batch(A, train.y[:, shuffled_inds[batch_slice]], W)
-            loss = MSE(x_star, train.x[:, shuffled_inds[batch_slice]])
+            y_batch = train.y[:, shuffled_inds[batch_slice]]
+            with torch.no_grad():
+                x_star = solve_lasso(
+                    A, y_batch, beta, W)
+            W0, Wpm, s = find_signs_alt(x_star, W)
+            x_closed = closed_form_alt(W0, Wpm, s, y_batch, beta)
+            print((x_star - x_closed).abs().max())
+            loss = MSE(x_closed, train.x[:, shuffled_inds[batch_slice]])
             loss.backward()
             last_loss[0] = loss.item()
             return loss
         opti.step(closure)
-        W = make_W(params)
 
         # do validation
         if do_val and step % val_interval == 0 or step == num_steps-1:
-            x_star = solve_val(A, val.y, W)
+            with torch.no_grad():
+                x_star = solve_lasso(A, val.y, beta, W)
             val_loss = MSE(x_star, val.x)
 
             # handle batch size increase if val loss not decreasing
@@ -158,7 +164,6 @@ def main(A, beta, W0, train,
                 if best_loss not in val_history:
                     if batch_size + batch_increment < max_batch_size:
                         batch_size += batch_increment
-                        _, solve_batch = setup_cvxpy_problem(m, n, k, batch_size)
                     val_fail = True
                     best_loss = float('inf')
         else:
@@ -168,7 +173,6 @@ def main(A, beta, W0, train,
         if do_print or val_fail:
             print(f'{step:<6d}{batch_ind:<12d}'
                   f'{last_loss[0]:<15.3e}{val_loss:<15.3e}', end='')
-            print(torch.matrix_rank(W))
             if val_fail:
                 print(f'validation fail -> batch_size={batch_size}')
                 val_fail = False
@@ -182,7 +186,7 @@ def main(A, beta, W0, train,
             shuffled_inds = random.sample(range(train_size), train_size)
 
 
-    return W.detach(), make_W(params0)
+    return W.detach()
 
 
 
@@ -233,7 +237,7 @@ def permute_for_display(W):
     #corr = np.fft.irfft( np.conj(FW[0:1, :]) * FW, axis=1)
 
 
-def find_optimal_beta(A, x_GT, y, beta, W, upper, lower=0):
+def find_optimal_beta(A, x_GT, y, W, upper, lower=0):
     def J(beta):
         x_star = solve_lasso(A, y, beta, W)
         return MSE(x_star, x_GT)
@@ -308,8 +312,8 @@ def min_golden(f, a, b, tol=1e-5):
 
 
 # plotting
-def solve_and_plot(A, data, W, **kwargs):
-    x_star = solve_lasso(A, data.y, W)
+def solve_and_plot(A, data, beta, W, **kwargs):
+    x_star = solve_lasso(A, data.y, beta, W)
     x_gt = data.x
     return plot_recon(x_gt, data.y, x_star, **kwargs)
 
@@ -370,7 +374,6 @@ def find_signs_alt(x, W, threshold=1e-18):
 def closed_form_alt(W0, Wpm, s, y, beta):
     y_term = y - beta * Wpm.T @ s
     proj = W0.pinverse() @ W0
-    print(proj)
     return y_term - proj @ y_term
 
 
@@ -453,7 +456,7 @@ def TV_denoise(m,x1,y1,b_opt):
 
 # deprecated, don't use ----------------------------
 def create_circulant(r):
-    raise DeprecationWarning('use make_conv instead')
+    DeprecationWarning('use make_conv instead')
     A=torch.zeros(r.shape[0],r.shape[0])
     rn=r/torch.norm(r,2)  # normalize rows
     for i in range(r.shape[0]):
