@@ -26,6 +26,18 @@ def make_opti(algo, W, opts):
 
 # problem setup
 
+def eval_lasso(A, x, y, beta, W):
+    k = W.shape[0]
+    num = y.shape[1]
+    problem, params = setup_cvxpy_problem(A, k, num)
+    params['y'].value = y.numpy()
+    params['beta'].value = beta
+    params['W'].value = W.numpy()
+    params['x'].value = x.numpy()
+
+    return problem.objective.expr.value
+
+
 def solve_lasso(A, y, beta, W):
     k = W.shape[0]
     num = y.shape[1]
@@ -59,9 +71,9 @@ def setup_cvxpy_problem(A, k, batch_size=1):
     beta = cp.Parameter(name='beta', nonneg=True)
     W = cp.Parameter((k, n), name='W')
     z = cp.Variable((k, batch_size), name='z')
-    objective_fn = 0.5 * cp.sum_squares(A @ x - y) + beta*cp.sum(cp.abs(z))
-    constraint = [W @ x == z]
-    problem = cp.Problem(cp.Minimize(objective_fn), constraint)
+    objective_fn = 0.5 * cp.sum_squares(A @ x - y) + beta*cp.sum(cp.abs(W@x))
+    #constraint = [W @ x == z]
+    problem = cp.Problem(cp.Minimize(objective_fn))
 
     params = {'y':y,
               'beta':beta,
@@ -137,20 +149,32 @@ def main(A, beta, W0, train,
             opti.zero_grad()
             batch_slice = slice(batch_ind, batch_ind+batch_size)
             y_batch = train.y[:, shuffled_inds[batch_slice]]
-            with torch.no_grad():
-                x_star = solve_lasso(
-                    A, y_batch, beta, W)
-            W0, Wpm, s = find_signs_alt(x_star, W)
-            x_closed = closed_form_alt(W0, Wpm, s, y_batch, beta)
-            print((x_star - x_closed).abs().max())
-            loss = MSE(x_closed, train.x[:, shuffled_inds[batch_slice]])
-            loss.backward()
-            last_loss[0] = loss.item()
+            batch_loss = 0
+            for inner in range(batch_size):
+                y_cur = y_batch[:, inner:inner+1]
+                with torch.no_grad():
+                    x_star = solve_lasso(A, y_cur, beta, W)
+                W0, Wpm, s = find_signs_alt(x_star, W)
+                x_closed = closed_form_alt(W0, Wpm, s, y_cur, beta)
+                with torch.no_grad():
+                    J_star = eval_lasso(A, x_star, y_cur, beta, W)
+                    J_closed = eval_lasso(A, x_closed, y_cur, beta, W)
+                    gap = J_closed - J_star
+                    if gap > 1e-4:
+                        print(f'large gap, J_closed={J_closed:.3e}'
+                              f'J_star={J_star:.3e}')
+
+                loss = MSE(
+                    x_closed,
+                    train.x[:, shuffled_inds[batch_slice]][:, inner:inner+1])
+                batch_loss += loss
+                loss.backward()
+            last_loss[0] = batch_loss.item() / batch_size
             return loss
         opti.step(closure)
 
         # do validation
-        if do_val and step % val_interval == 0 or step == num_steps-1:
+        if do_val and (step % val_interval == 0 or step == num_steps-1):
             with torch.no_grad():
                 x_star = solve_lasso(A, val.y, beta, W)
             val_loss = MSE(x_star, val.x)
@@ -304,7 +328,7 @@ def min_golden(f, a, b, tol=1e-5):
             yd = f(d)
 
         #logging.info(f"iter {k}, f({x}) = {best_val}")
-
+nn
     if yc < yd:
         return (a, d)
     else:
@@ -358,7 +382,7 @@ def find_sign_pattern(z, threshold=1e-10):
 
     return S_0, S_pm, s
 
-def find_signs_alt(x, W, threshold=1e-18):
+def find_signs_alt(x, W, threshold=1e-4):
     """
     given x* and W, find the necessary sign matrices:
     W_0, W_pm, and s
@@ -373,7 +397,8 @@ def find_signs_alt(x, W, threshold=1e-18):
 
 def closed_form_alt(W0, Wpm, s, y, beta):
     y_term = y - beta * Wpm.T @ s
-    proj = W0.pinverse() @ W0
+    # proj = W0.pinverse() @ W0
+    proj = W0.T @ (W0 @ W0.T).inverse() @ W0
     return y_term - proj @ y_term
 
 

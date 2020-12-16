@@ -4,12 +4,12 @@ to the one returned by our closed-form expression.
 """
 import torch
 
-import learnreg
+import learnreg as lr
 
 # parameters
-n = 100 # signal length, W is n x n
+n = 5 # signal length, W is n x n
 sigma = 1e-1
-sign_thresh = 1e-18
+zero_thresh = 1e-6
 SEED = 0
 
 # init
@@ -21,23 +21,23 @@ W = W + 0.001 * torch.randn_like(W)
 
 # make dataset
 A = torch.eye(n,n)
-x, y = learnreg.make_dataset(A, num_signals=1, sigma=sigma)
+x, y = lr.make_dataset(A, num_signals=1, sigma=sigma)
 
 beta = lr.find_optimal_beta(A, x, y, W, upper=2)
 
-J = lambda x : learnreg.compute_loss(x, y, beta, W)
+J = lambda x : lr.compute_loss(x, y, beta, W)
 
 # solve with cvxpy
-x_cvxpy = learnreg.optimize(W, y, beta)
+x_cvxpy = lr.optimize(W, y, beta)
 
 # solve in closed form
 z = W @ x_cvxpy
-S0,Sp,s = learnreg.find_sign_pattern(z, threshold=sign_thresh)
-x_closed=learnreg.closed_form(S0, Sp, s, W, beta, y)
+S0,Sp,s = lr.find_sign_pattern(z, threshold=zero_thresh)
+x_closed=lr.closed_form(S0, Sp, s, W, beta, y)
 
 # solve with closed form alt
-W0, Wpm, s = learnreg.find_signs_alt(x_cvxpy, W)
-x_closed_alt = learnreg.closed_form_alt(W0, Wpm, s, y, beta)
+W0, Wpm, s = lr.find_signs_alt(x_cvxpy, W, threshold=zero_thresh)
+x_closed_alt = lr.closed_form_alt(W0, Wpm, s, y, beta)
 
 # compared
 max_diff = (x_closed - x_cvxpy).abs().max()
