@@ -235,6 +235,18 @@ def find_optimal_beta(A, x_GT, y, W, upper, lower=0):
 
     a, b = min_golden(J, lower, upper)
     return (a+b)/2
+          
+          
+          
+          
+def find_optimal_thres(x_cvx,W,y,beta,lower=1e-16,upper=1e-1):
+    def J(thres):
+        W0,Wpm,s=find_signs_alt(x_cvx, W, thres)
+        x_close=closed_form_alt(W0, Wpm, s, y, beta)
+        return MSE(x_close, x_cvx)
+    
+    a, b = min_golden(J, lower, upper)
+    return (a+b)/2          
 
 def min_golden(f, a, b, tol=1e-5):
     '''
