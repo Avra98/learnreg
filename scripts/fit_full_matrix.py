@@ -8,49 +8,31 @@ import collections
 import numpy as np
 
 import time
-nn
 import learnreg as lr
 
-n = 5  # signal length
-sigma = 1e-1
-#opti_type = 'LBFGS'
-#learning_rate = 1e-1
-#num_steps = 20
-opti_type = 'SGD'
-learning_rate = 1e-1
-num_steps = 1000
-SEED = 0
-
-
-# init
-torch.manual_seed(SEED)  # make repeatable
-
-A = torch.eye(n,n)
-
-train = lr.make_dataset(A, num_signals=25, sigma=sigma)
-val   = lr.make_dataset(A, num_signals=1,    sigma=sigma)
-
-#W0 = lr.make_TV(n)
-#W0 = W0 + 0.001 * torch.randn_like(W0)
-W0 = torch.randn(n-1, n)
-
+# 2.4e-02 is the best I have seen
+learn_opts = dict(
+    learning_rate=1e0,
+    num_steps=int(1e5),  # todo: try lr=1e-1 and int(1e6) (overnight)?
+    print_interval=100,)
 
 beta = 0.1
 
-W = W0.clone()
-#beta = lr.find_optimal_beta(A, train.x[:,:5], train.y[:,:5], W0, upper=2)
+train, W0, W = lr.learn_for_denoising(
+    n = 50,
+    num_signals=1000,
+    noise_sigma = 1e-1,
+    beta = beta,
+    SEED = 0,
+    learn_opts=learn_opts)
 
-W = lr.main(A, beta, W, train, val=val,
-            batch_size=1, opti_type=opti_type, opti_opts=dict(lr=learning_rate),
-            num_steps=25*num_steps, val_interval=100, print_interval=np.ceil(num_steps/20))
 
 # show results
 fig_name = 'reconstruction results'
 # try this W on another problem
-t_small = lr.Dataset(train.x[:,:5], train.y[:, :5])
-fig, ax = lr.solve_and_plot(A, val, beta, W)
-ax.set_title('validation signal')
-
+train_small = lr.Dataset(train.x[:,:5], train.y[:, :5])
+fig, ax = lr.plot_denoising(train_small, beta, W)
+ax.set_title('training (first 5)')
 fig.tight_layout()
 fig.show()
 

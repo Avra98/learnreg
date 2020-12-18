@@ -6,13 +6,29 @@ import collections
 import random
 import functools
 
-
 from cvxpylayers.torch import CvxpyLayer
 
 # datatypes
 Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 
-#
+# top-level driver code
+def learn_for_denoising(n, num_signals, noise_sigma, beta, SEED, learn_opts):
+    # init
+    torch.manual_seed(SEED)  # make repeatable
+
+    # setup data
+    A = torch.eye(n, n)
+    train = make_dataset(A, num_signals=num_signals, sigma=noise_sigma)
+
+    # setup transform
+    W = torch.randn(n-1, n)
+    W0 = W.clone()
+
+    # learn
+    W = main(A, beta, W, train, **learn_opts)
+
+    return train, W0, W
+
 
 def make_opti(algo, W, opts):
     if algo == 'LBFGS':
@@ -34,6 +50,7 @@ def eval_lasso(A, x, y, beta, W):
     params['beta'].value = beta
     params['W'].value = W.numpy()
     params['x'].value = x.numpy()
+    params['z'].value = (W @ x).numpy()
 
     return problem.objective.expr.value
 
@@ -71,13 +88,15 @@ def setup_cvxpy_problem(A, k, batch_size=1):
     beta = cp.Parameter(name='beta', nonneg=True)
     W = cp.Parameter((k, n), name='W')
     z = cp.Variable((k, batch_size), name='z')
-    objective_fn = 0.5 * cp.sum_squares(A @ x - y) + beta*cp.sum(cp.abs(W@x))
-    #constraint = [W @ x == z]
-    problem = cp.Problem(cp.Minimize(objective_fn))
+
+    objective_fn = 0.5 * cp.sum_squares(A @ x - y) + beta*cp.sum(cp.abs(z))
+    constraint = [W @ x == z]  # writing with this splitting makes is_dpp True
+    problem = cp.Problem(cp.Minimize(objective_fn), constraint)
 
     params = {'y':y,
               'beta':beta,
               'W':W,
+              'z':z,
               'x':x}
 
     return problem, params
@@ -104,111 +123,59 @@ def make_dataset(A, num_signals, sigma):
 
 
 def main(A, beta, W0, train,
-         opti_type, opti_opts, num_steps,
-         batch_size=1, val=None, val_interval=1, print_interval=1,
-         history_length=None, max_batch_size=None):
+         learning_rate, num_steps, print_interval=1):
     """
     k : sparse code length
 
     train : NamedTupe with fields x and y
     """
 
-    batch_increment = 2  # add this on val fail
-
-    # infer some problem specifics from parameters
-    do_val = val is not None
-    decrease_batch_size = history_length is not None
-
-    train_size = train.x.shape[1]
-    assert batch_size <= train_size
-
-    if max_batch_size is None:
-        max_batch_size = train_size
+    x, y = train
+    train_length = x.shape[1]
 
     W = W0.clone()
     W.requires_grad_(True)
 
+    MSE_history = torch.full((train_length,), np.nan)
+
     # main loop
-    opti = make_opti(opti_type, W, opti_opts)
+    opti = torch.optim.SGD((W,), learning_rate)
 
-    last_loss = [None]  # use this list to get losses out of the closure
-
-    if decrease_batch_size:
-        val_history = collections.deque(history_length*[float('inf')], history_length)
-        best_loss = float('inf')
-    val_fail = False
-
-    # setup batches
-    batch_ind = 0
-    shuffled_inds = random.sample(range(train_size), train_size)
-
-    print(f'{"step":6s}{"batch ind":12s}{"batch loss":15s}{"val loss":15s}')
+    print(f'{"step":6s}{"epoch":6s}{"index":6s}'
+          f'{"cur loss":15s}{"epoch avg loss":15s}')
     for step in range(num_steps):
+        epoch = step // train_length
+        index = step % train_length
+
         # compute grad and take a opti step
-        def closure():  # why "closure"? see https://pytorch.org/docs/stable/optim.html
-            opti.zero_grad()
-            batch_slice = slice(batch_ind, batch_ind+batch_size)
-            y_batch = train.y[:, shuffled_inds[batch_slice]]
-            batch_loss = 0
-            for inner in range(batch_size):
-                y_cur = y_batch[:, inner:inner+1]
-                with torch.no_grad():
-                    x_star = solve_lasso(A, y_cur, beta, W)
-                W0, Wpm, s = find_signs_alt(x_star, W)
-                x_closed = closed_form_alt(W0, Wpm, s, y_cur, beta)
-                with torch.no_grad():
-                    J_star = eval_lasso(A, x_star, y_cur, beta, W)
-                    J_closed = eval_lasso(A, x_closed, y_cur, beta, W)
-                    gap = J_closed - J_star
-                    if gap > 1e-4:
-                        print(f'large gap, J_closed={J_closed:.3e}'
-                              f'J_star={J_star:.3e}')
+        opti.zero_grad()
+        y_cur = y[:, index:index+1]
+        x_cur = x[:, index:index+1]
+        with torch.no_grad():
+            x_star = solve_lasso(A, y_cur, beta, W)
+        W0, Wpm, s = find_signs_alt(x_star, W)
+        x_closed = closed_form_alt(W0, Wpm, s, y_cur, beta)
 
-                loss = MSE(
-                    x_closed,
-                    train.x[:, shuffled_inds[batch_slice]][:, inner:inner+1])
-                batch_loss += loss
-                loss.backward()
-            last_loss[0] = batch_loss.item() / batch_size
-            return loss
-        opti.step(closure)
+        # check that x_closed is accurate
+        with torch.no_grad():
+            J_star = eval_lasso(A, x_star, y_cur, beta, W)
+            J_closed = eval_lasso(A, x_closed, y_cur, beta, W)
+            gap = J_closed - J_star
+            if gap > 1e-4:
+                print(f'large gap, J_closed={J_closed:.3e}'
+                      f'J_star={J_star:.3e}')
 
-        # do validation
-        if do_val and (step % val_interval == 0 or step == num_steps-1):
-            with torch.no_grad():
-                x_star = solve_lasso(A, val.y, beta, W)
-            val_loss = MSE(x_star, val.x)
+        loss = MSE(x_closed, x_cur)
+        last_loss = loss.item()
+        MSE_history[index] = last_loss
+        epoch_loss = MSE_history.mean()
+        loss.backward()
+        opti.step()
 
-            # handle batch size increase if val loss not decreasing
-            if decrease_batch_size:
-                val_history.appendleft(val_loss)
-                if val_loss < best_loss:
-                    best_loss = val_loss
-
-                if best_loss not in val_history:
-                    if batch_size + batch_increment < max_batch_size:
-                        batch_size += batch_increment
-                    val_fail = True
-                    best_loss = float('inf')
-        else:
-            val_loss = float('nan')
-
-        do_print = step % print_interval == 0 or step == num_steps-1
-        if do_print or val_fail:
-            print(f'{step:<6d}{batch_ind:<12d}'
-                  f'{last_loss[0]:<15.3e}{val_loss:<15.3e}', end='')
-            if val_fail:
-                print(f'validation fail -> batch_size={batch_size}')
-                val_fail = False
-            else:
-                print('')
-
-        # update batch index for next step
-        batch_ind += batch_size
-        if batch_ind + batch_size > train_size:
-            batch_ind = 0
-            shuffled_inds = random.sample(range(train_size), train_size)
-
+        # print status line
+        if step % print_interval == 0 or step == num_steps-1:
+            print(f'{step:<6d}{epoch:<6d}{index:<6d}'
+                  f'{last_loss:<15.3e}{epoch_loss:<15.3e}')
 
     return W.detach()
 
@@ -328,7 +295,7 @@ def min_golden(f, a, b, tol=1e-5):
             yd = f(d)
 
         #logging.info(f"iter {k}, f({x}) = {best_val}")
-nn
+
     if yc < yd:
         return (a, d)
     else:
@@ -336,7 +303,8 @@ nn
 
 
 # plotting
-def solve_and_plot(A, data, beta, W, **kwargs):
+def plot_denoising(data, beta, W, **kwargs):
+    A = torch.eye(data.x.shape[0])
     x_star = solve_lasso(A, data.y, beta, W)
     x_gt = data.x
     return plot_recon(x_gt, data.y, x_star, **kwargs)
@@ -344,6 +312,8 @@ def solve_and_plot(A, data, beta, W, **kwargs):
 def plot_recon(x_gt, y, x_star, ax=None, **kwargs):
     if ax is None:
         fig, ax = plt.subplots()
+    else:
+        fig = ax.get_figure()
 
     for a, b, c in zip(x_gt.T, y.T, x_star.T):
         ax.plot(a, color='k', label='x_GT')
@@ -351,7 +321,8 @@ def plot_recon(x_gt, y, x_star, ax=None, **kwargs):
         ax.plot(c, color='tab:orange', linestyle='dashed', label='x*')
 
     ax.legend(('x_GT', 'y', 'x*'))
-    return ax.get_figure(), ax
+
+    return fig, ax
 
 
 def show_W(W_0, W):
