@@ -153,6 +153,8 @@ def main(A, beta, W0, train,
         x_cur = x[:, index:index+1]
         with torch.no_grad():
             x_star = solve_lasso(A, y_cur, beta, W)
+            threshold = find_optimal_thres(x_star, W, y_cur , beta)
+        W0, Wpm, s = find_signs_alt(x_star, W,threshold)
         W0, Wpm, s = find_signs_alt(x_star, W)
         x_closed = closed_form_alt(W0, Wpm, s, y_cur, beta)
 
