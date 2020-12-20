@@ -55,6 +55,14 @@ def eval_lasso(A, x, y, beta, W):
     return problem.objective.expr.value
 
 
+def eval_upper(A, x_GT, y, beta, W):
+    """
+    return the upper cost value at point W
+    """
+    x = solve_lasso(A, y, beta, W)
+    return MSE(x, x_GT)
+
+
 def solve_lasso(A, y, beta, W):
     k = W.shape[0]
     num = y.shape[1]
@@ -153,8 +161,8 @@ def main(A, beta, W0, train,
         x_cur = x[:, index:index+1]
         with torch.no_grad():
             x_star = solve_lasso(A, y_cur, beta, W)
-            threshold = find_optimal_thres(x_star, W, y_cur , beta)
-        W0, Wpm, s = find_signs_alt(x_star, W,threshold)
+            # threshold = find_optimal_thres(x_star, W, y_cur , beta)
+        # W0, Wpm, s = find_signs_alt(x_star, W, threshold)
         W0, Wpm, s = find_signs_alt(x_star, W)
         x_closed = closed_form_alt(W0, Wpm, s, y_cur, beta)
 
@@ -237,18 +245,18 @@ def find_optimal_beta(A, x_GT, y, W, upper, lower=0):
 
     a, b = min_golden(J, lower, upper)
     return (a+b)/2
-          
-          
-          
-          
+
+
+
+
 def find_optimal_thres(x_cvx,W,y,beta,lower=1e-16,upper=1e-1):
     def J(thres):
         W0,Wpm,s=find_signs_alt(x_cvx, W, thres)
         x_close=closed_form_alt(W0, Wpm, s, y, beta)
         return MSE(x_close, x_cvx)
-    
+
     a, b = min_golden(J, lower, upper)
-    return (a+b)/2          
+    return (a+b)/2
 
 def min_golden(f, a, b, tol=1e-5):
     '''
