@@ -17,7 +17,7 @@ learn_opts = dict(
     print_interval=100,)
 
 beta = 0.1
-n = 50
+n = 64
 
 train, W0, W = lr.learn_for_denoising(
     n=n,

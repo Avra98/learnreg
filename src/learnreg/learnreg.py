@@ -41,8 +41,10 @@ def make_opti(algo, W, opts):
 
 
 # problem setup
-
 def eval_lasso(A, x, y, beta, W):
+    """
+    compute J(x) for the lower-level  prblem
+    """
     k = W.shape[0]
     num = y.shape[1]
     problem, params = setup_cvxpy_problem(A, k, num)
@@ -324,58 +326,8 @@ def min_golden(f, a, b, tol=1e-5):
         return (c, b)
 
 
-# plotting
-def plot_denoising(data, beta, W, **kwargs):
-    A = torch.eye(data.x.shape[0])
-    x_star = solve_lasso(A, data.y, beta, W)
-    x_gt = data.x
-    return plot_recon(x_gt, data.y, x_star, **kwargs)
 
-def plot_recon(x_gt, y, x_star, ax=None, **kwargs):
-    if ax is None:
-        fig, ax = plt.subplots()
-    else:
-        fig = ax.get_figure()
-
-    for a, b, c in zip(x_gt.T, y.T, x_star.T):
-        ax.plot(a, color='k', label='x_GT')
-        ax.plot(b, label='y', color='tab:blue')
-        ax.plot(c, color='tab:orange', linestyle='dashed', label='x*')
-
-    ax.legend(('x_GT', 'y', 'x*'))
-
-    return fig, ax
-
-
-def show_W(W_0, W):
-    fig, ax = plt.subplots(1, 2)
-    ax[0].imshow(W_0)
-    ax[0].set_title('W_0')
-    ax[1].imshow(W)
-    ax[1].set_title('W*')
-    fig.show()
-
-
-def find_sign_pattern(z, threshold=1e-10):
-    """
-    z: (k,), tensor - D@x_opt
-
-    returns
-    S_0 (k_0, k) tensor - selection matrix
-    S_pm (k_{+-}, k) tensor - selection matrix
-    s (k_{+-},) tensor
-    """
-    is_zero = z.abs() < threshold  # boolean, (k,)
-    i=is_zero.reshape(is_zero.shape[0])
-    signs = torch.sign(z)  # {-1, 0, 1}, (k,)
-    s = signs[~i]  # {-1, 1}, (k_{+-})
-    I = torch.eye(len(z))
-    S_0 = I[i, :]
-    S_pm = I[~i, :]
-
-    return S_0, S_pm, s
-
-def find_signs_alt(x, W, threshold=1e-4):
+def find_signs(x, W, threshold=1e-4):
     """
     given x* and W, find the necessary sign matrices:
     W_0, W_pm, and s
@@ -388,37 +340,16 @@ def find_signs_alt(x, W, threshold=1e-4):
 
     return W0, Wpm, s
 
-def closed_form_alt(W0, Wpm, s, y, beta):
-    y_term = y - beta * Wpm.T @ s
-    # proj = W0.pinverse() @ W0
-    proj = W0.T @ (W0 @ W0.T).inverse() @ W0
-    return y_term - proj @ y_term
-
-
-def closed_form(S_0, S_pm, s, W, l, b):
+def closed_form(W0, Wpm, s, y, beta):
     """
     implemention of (XXX) from "XXXXX" Tibshi...
     https://arxiv.org/pdf/1805.07682.pdf
 
     """
-    W=W.float()
-    S_0=S_0.float()
-    S_pm=S_pm.float()
-    W_b=torch.matmul(S_0,W)
-    Wb=torch.matmul(S_pm,W)
-    W_bt=torch.transpose(W_b,0,1)
-    Wbt=torch.transpose(Wb,0,1)
-    s=s.float()
-    proj = (W_bt @ torch.pinverse(W_b @ W_bt) @ W_b)
-    Pnull=torch.eye(W_b.shape[1])-proj
-    temp= (b - l * Wbt @ s)
-    beta=Pnull @ temp
-    return beta
-
-def compute_loss(x, y, beta, W):
-    assert x.shape == y.shape
-    return MSE(x, y) + beta * torch.sum(torch.abs((W@x)))
-
+    y_term = y - beta * Wpm.T @ s
+    # proj = W0.pinverse() @ W0  # todo: do we prefer this or the next line?
+    proj = W0.T @ (W0 @ W0.T).inverse() @ W0
+    return y_term - proj @ y_term
 
 def optimize(D,bh,beta):
     n = D.shape[1]
@@ -469,14 +400,35 @@ def TV_denoise(m,x1,y1,b_opt):
     tv[1]=-1.0
     TV=b_opt*create_circulant(tv)
     xrec=optimize(TV,y1,1)
-    return xrec,src.MSE(x1,xrec)
+    return xrec, src.MSE(x1,xrec)
+
+# plotting
+def plot_denoising(data, beta, W, **kwargs):
+    A = torch.eye(data.x.shape[0])
+    x_star = solve_lasso(A, data.y, beta, W)
+    x_gt = data.x
+    return plot_recon(x_gt, data.y, x_star, **kwargs)
+
+def plot_recon(x_gt, y, x_star, ax=None, **kwargs):
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.get_figure()
+
+    for a, b, c in zip(x_gt.T, y.T, x_star.T):
+        ax.plot(a, color='k', label='x_GT')
+        ax.plot(b, label='y', color='tab:blue')
+        ax.plot(c, color='tab:orange', linestyle='dashed', label='x*')
+
+    ax.legend(('x_GT', 'y', 'x*'))
+
+    return fig, ax
 
 
-# deprecated, don't use ----------------------------
-def create_circulant(r):
-    DeprecationWarning('use make_conv instead')
-    A=torch.zeros(r.shape[0],r.shape[0])
-    rn=r/torch.norm(r,2)  # normalize rows
-    for i in range(r.shape[0]):
-        A[i,:]=torch.roll(rn,i)
-    return A
+def show_W(W_0, W):
+    fig, ax = plt.subplots(1, 2)
+    ax[0].imshow(W_0)
+    ax[0].set_title('W_0')
+    ax[1].imshow(W)
+    ax[1].set_title('W*')
+    fig.show()
