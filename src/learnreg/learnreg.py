@@ -12,7 +12,7 @@ from cvxpylayers.torch import CvxpyLayer
 Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 
 # top-level driver code
-def learn_for_denoising(n, num_signals, noise_sigma, beta, SEED, learn_opts):
+def learn_for_denoising(n, num_signals, noise_sigma, SEED, learn_opts):
     # init
     torch.manual_seed(SEED)  # make repeatable
 
@@ -20,14 +20,21 @@ def learn_for_denoising(n, num_signals, noise_sigma, beta, SEED, learn_opts):
     A = torch.eye(n, n)
     train = make_dataset(A, num_signals=num_signals, sigma=noise_sigma)
 
+    baseline_MSE = MSE(A.T @ train.y, train.x)
+    print(f'baseline: MSE(ATy, x_GT) = {baseline_MSE: .5e}')
+
     # setup transform
-    W = torch.randn(n-1, n)
+    #W = torch.randn(n-1, n)
+    W = make_conv(torch.ones(3), n)
     W0 = W.clone()
+
+    beta = find_optimal_beta(A, train.x[:, :10], train.y[:, :10], W, upper=1.0, lower=0)
+    print(f'optimal beta: {beta: .5e}')
 
     # learn
     W = main(A, beta, W, train, **learn_opts)
 
-    return train, W0, W
+    return train, A, W0, W, beta
 
 
 def make_opti(algo, W, opts):
@@ -164,23 +171,22 @@ def main(A, beta, W0, train,
         with torch.no_grad():
             x_star = solve_lasso(A, y_cur, beta, W)
             # threshold = find_optimal_thres(x_star, W, y_cur , beta)
-        # W0, Wpm, s = find_signs_alt(x_star, W, threshold)
-        W0, Wpm, s = find_signs_alt(x_star, W)
-        x_closed = closed_form_alt(W0, Wpm, s, y_cur, beta)
+        W0, Wpm, s = find_signs(x_star, W)
+        x_closed = closed_form(W0, Wpm, s, y_cur, beta)
 
         # check that x_closed is accurate
         with torch.no_grad():
             J_star = eval_lasso(A, x_star, y_cur, beta, W)
             J_closed = eval_lasso(A, x_closed, y_cur, beta, W)
-            gap = J_closed - J_star
-            if gap > 1e-4:
-                print(f'large gap, J_closed={J_closed:.3e}'
+            gap = np.abs(J_closed - J_star)
+            if gap/J_star > 1e-2:
+                print(f'large gap: J_closed={J_closed:.3e}, '
                       f'J_star={J_star:.3e}')
 
         loss = MSE(x_closed, x_cur)
         last_loss = loss.item()
         MSE_history[index] = last_loss
-        epoch_loss = MSE_history.mean()
+        epoch_loss = np.nanmean(MSE_history)
         loss.backward()
         opti.step()
 
@@ -403,11 +409,34 @@ def TV_denoise(m,x1,y1,b_opt):
     return xrec, src.MSE(x1,xrec)
 
 # plotting
-def plot_denoising(data, beta, W, **kwargs):
+def plot_denoising(data, beta, W, max_signals=3, **kwargs):
+    """
+    plot examples of the denoising results obtained with W
+    """
     A = torch.eye(data.x.shape[0])
-    x_star = solve_lasso(A, data.y, beta, W)
+    x_star = solve_lasso(A, data.y[:, :max_signals], beta, W)
     x_gt = data.x
-    return plot_recon(x_gt, data.y, x_star, **kwargs)
+    fig, axes = plt.subplots(x_star.shape[1], 1)
+    for i, ax in enumerate(axes):
+        plot_recon(
+            x_gt[:, i],
+            data.y[:, i:i+1],
+            x_star[:, i:i+1], ax=ax, **kwargs)
+    return fig, ax
+
+def plot_recon_sparsity(A, data, beta, W, max_signals=3, **kwargs):
+    """
+    make a plot to evaluate if W@x_star is sparse
+    """
+    x_star = solve_lasso(A, data.y[:, :max_signals], beta, W)
+    Wx_star = W @ x_star
+
+    fig, axes = plt.subplots(x_star.shape[1], 1)
+
+    for i, ax in enumerate(axes):
+        ax.stem(Wx_star[:, i])
+    return fig, ax
+
 
 def plot_recon(x_gt, y, x_star, ax=None, **kwargs):
     if ax is None:
@@ -415,10 +444,9 @@ def plot_recon(x_gt, y, x_star, ax=None, **kwargs):
     else:
         fig = ax.get_figure()
 
-    for a, b, c in zip(x_gt.T, y.T, x_star.T):
-        ax.plot(a, color='k', label='x_GT')
-        ax.plot(b, label='y', color='tab:blue')
-        ax.plot(c, color='tab:orange', linestyle='dashed', label='x*')
+    ax.plot(x_gt, color='k', label='x_GT')
+    ax.plot(y, label='y', color='tab:blue')
+    ax.plot(x_star, color='tab:orange', linestyle='dashed', label='x*')
 
     ax.legend(('x_GT', 'y', 'x*'))
 
