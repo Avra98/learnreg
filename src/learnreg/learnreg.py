@@ -25,10 +25,14 @@ def learn_for_denoising(n, num_signals, noise_sigma, SEED, learn_opts):
 
     # setup transform
     #W = torch.randn(n-1, n)
-    W = make_conv(torch.ones(3), n)
+    #W = make_conv(torch.ones(3), n)
+    W = make_conv(torch.ones(1), n)
+    W = W - W.mean(dim=1,keepdims=True)
+    #W = make_TV(n)
     W0 = W.clone()
 
-    beta = find_optimal_beta(A, train.x[:, :10], train.y[:, :10], W, upper=1.0, lower=0)
+    beta = find_optimal_beta(A, train.x[:, :10], train.y[:, :10], W,
+                             upper=1e1, lower=0)
     print(f'optimal beta: {beta: .5e}')
 
     # learn
@@ -252,6 +256,9 @@ def find_optimal_beta(A, x_GT, y, W, upper, lower=0):
         return MSE(x_star, x_GT)
 
     a, b = min_golden(J, lower, upper)
+    val = (a+b)/2
+    if np.abs(val-lower)/upper < 1e-2 or np.abs(val-upper)/upper < 1e-2:
+        print("warning, optimal beta is close to one of the limits")
     return (a+b)/2
 
 
