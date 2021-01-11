@@ -145,9 +145,9 @@ def make_dataset(A, num_signals, sigma):
 def patch_dataset(num_signals,sigma):
     import hdf5storage
     ##Import data
-    mat = hdf5storage.loadmat('rpatch.mat') 
-    x = mat['imc']
-    y = mat['imn']   ##Generate two types of measurements, 1) noise added in image domain (y), 2) noise added in patch domain (y1)
+    mat = hdf5storage.loadmat('patch.mat') 
+    x = mat['impatc']
+    y = mat['impatn']   ##Generate two types of measurements, 1) noise added in image domain (y), 2) noise added in patch domain (y1)
     ##Subtract mean
     x=x-np.mean(x,axis=0)
     y=y-np.mean(y,axis=0)
