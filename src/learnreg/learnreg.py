@@ -145,26 +145,27 @@ def make_dataset(A, num_signals, sigma):
 def patch_dataset(num_signals,sigma):
     import hdf5storage
     ##Import data
-    mat = hdf5storage.loadmat('patch.mat') 
-    x = mat['impatc']
-    y = mat['impatn']   ##Generate two types of measurements, 1) noise added in image domain (y), 2) noise added in patch domain (y1)
+    mat = hdf5storage.loadmat('rpatch.mat') 
+    x = mat['imc']
+    y = mat['imn']   ##Generate two types of measurements, 1) noise added in image domain (y), 2) noise added in patch domain (y1)
     ##Subtract mean
     x=x-np.mean(x,axis=0)
     y=y-np.mean(y,axis=0)
     ##Convert to torch
-    x=torch.from_numpy(x)
-    y=torch.from_numpy(y)
+    #x=torch.from_numpy(x)
+    #y=torch.from_numpy(y)
     ##Generate y1
-    y1=x + sigma*torch.randn_like(x)
-    nData=x.size(1)
+    y1=x + np.random.normal(0, sigma, x.shape)
+    nData=x.shape[1]
     ##Scramble data
-    perm = torch.randperm(nData)
+    perm = np.random.permutation(nData)
     x = x[:,perm]
     y = y[:,perm]
     y1 = y1[:,perm]
     ##Select subset of data to work with
     x=x[:,:num_signals]
     y1=y1[:,:num_signals]
+    
     return Dataset(x=x, y=y1)
 
 
