@@ -45,7 +45,8 @@ learn_opts['learning_rate'] = 1e-2
 W = lr.main(A, beta, W, train, **learn_opts)
 
 # make a small test set to evaluate
-test = lr.make_dataset(A, num_signals=10, sigma=noise_sigma)
+#test = lr.make_dataset(A, num_signals=10, sigma=noise_sigma)
+test = lr.patch_dataset(A, num_signals=10, sigma=noise_sigma)
 #test = lr.Dataset(train.x[:, :10], train.y[:, :10])
 beta_W = lr.find_optimal_beta(A, test.x, test.y, W, 1e1)
 
