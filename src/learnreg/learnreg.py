@@ -28,6 +28,7 @@ def learn_for_denoising(n, num_signals, noise_sigma, SEED, learn_opts):
     #W = make_conv(torch.ones(3), n)
     W = make_conv(torch.ones(1), n)
     W = W - W.mean(dim=1,keepdims=True)
+    W = W[1:, :]  # to let W be full row rank
     #W = make_TV(n)
     W0 = W.clone()
 
@@ -88,7 +89,7 @@ def solve_lasso(A, y, beta, W):
 
     return torch.tensor(params['x'].value, dtype=torch.float)
 
-@functools.lru_cache  # caching because making the problem object is slow
+@functools.lru_cache()  # caching because making the problem object is slow
 def setup_cvxpy_problem(A, k, batch_size=1):
     """
     sets up a cvxpy Problem representing
@@ -122,14 +123,22 @@ def setup_cvxpy_problem(A, k, batch_size=1):
 
     return problem, params
 
+def make_signal(sig_type, n, **kwargs):
+    if sig_type == 'piecewise_const':
+        make_piecewise_const_signal(n, **kwargs)
+    elif sig_type == 'cosines':
+        make_cosines_signal(n, **kwargs)
 
-def make_signal(n, jump_freq=0.1, num_signals=1):
+def make_piecewise_const_signal(n, jump_freq=0.1, num_signals=1):
     jumps = torch.rand(n, num_signals) <= jump_freq
     heights = torch.randn(n, num_signals)
     heights[~jumps] = 0
     sigs = heights.cumsum(dim=0)
     sigs = sigs - sigs.mean(dim=0) + torch.randn(num_signals)
     return sigs
+
+def make_cosines_signal(n, num_cosines):
+    pass
 
 
 def make_measurement(x, A, sigma):

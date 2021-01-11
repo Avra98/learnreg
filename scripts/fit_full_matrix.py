@@ -14,6 +14,7 @@ import learnreg as lr
 # so the regions are not correlated)
 # todo: get serious: set this up so you can systematically compare
 
+
 # TV is roughly 1.5e-1
 # best learned I've seen is roughly 1.6e-1 (avg filter init)
 # 1.7e-1 from random init
@@ -80,10 +81,10 @@ lr.show_W(W0, W)
 
 # are the reconstructions actually sparse?
 fig, ax = lr.plot_recon_sparsity(A, test, beta_W, W)
-fig.suptitle('W_learned @ x_star(W_learned)')
+fig.suptitle('W_learned @ x*(W_learned)')
 fig.show()
 fig, ax = lr.plot_recon_sparsity(A, test, beta_TV, TV)
-fig.suptitle('W_TV @ x_star(W_TV)')
+fig.suptitle('W_TV @ x*(W_TV)')
 fig.show()
 
 print(MSE_learned, MSE_TV)
