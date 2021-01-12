@@ -1,3 +1,9 @@
+"""
+
+Assume everything is a numpy array.
+Try to keep everything a numpy array.
+"""
+
 import numpy as np
 import torch
 import cvxpy as cp
@@ -12,13 +18,14 @@ from cvxpylayers.torch import CvxpyLayer
 Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 
 # top-level driver code
-def learn_for_denoising(n, num_signals, noise_sigma, SEED, learn_opts):
+def learn_for_denoising(signal_type, n, num_signals, noise_sigma, SEED, learn_opts):
     # init
     torch.manual_seed(SEED)  # make repeatable
+    np.random.seed(SEED)
 
     # setup data
-    A = torch.eye(n, n)
-    train = make_dataset(A, num_signals=num_signals, sigma=noise_sigma)
+    A = np.eye(n, n)
+    train = make_dataset(signal_type, A, num_signals=num_signals, sigma=noise_sigma)
 
     baseline_MSE = MSE(A.T @ train.y, train.x)
     print(f'baseline: MSE(ATy, x_GT) = {baseline_MSE: .5e}')
@@ -26,14 +33,14 @@ def learn_for_denoising(n, num_signals, noise_sigma, SEED, learn_opts):
     # setup transform
     #W = torch.randn(n-1, n)
     #W = make_conv(torch.ones(3), n)
-    W = make_conv(torch.ones(1), n)
-    W = W - W.mean(dim=1,keepdims=True)
+    W = make_conv(np.ones(1), n)
+    W = W - W.mean(axis=1, keepdims=True)
     W = W[1:, :]  # to let W be full row rank
     #W = make_TV(n)
-    W0 = W.clone()
+    W0 = W.copy()
 
     beta = find_optimal_beta(A, train.x[:, :10], train.y[:, :10], W,
-                             upper=1e1, lower=0)
+                             upper=1e0, lower=0)
     print(f'optimal beta: {beta: .5e}')
 
     # learn
@@ -59,12 +66,12 @@ def eval_lasso(A, x, y, beta, W):
     """
     k = W.shape[0]
     num = y.shape[1]
-    problem, params = setup_cvxpy_problem(A, k, num)
-    params['y'].value = y.numpy()
+    problem, params = setup_cvxpy_problem(*A.shape, k, num)
+    params['y'].value = y
     params['beta'].value = beta
-    params['W'].value = W.numpy()
-    params['x'].value = x.numpy()
-    params['z'].value = (W @ x).numpy()
+    params['W'].value = W
+    params['x'].value = x
+    params['z'].value = (W @ x)
 
     return problem.objective.expr.value
 
@@ -80,31 +87,33 @@ def eval_upper(A, x_GT, y, beta, W):
 def solve_lasso(A, y, beta, W):
     k = W.shape[0]
     num = y.shape[1]
-    problem, params = setup_cvxpy_problem(A, k, num)
-    params['y'].value = y.numpy()
+    problem, params = setup_cvxpy_problem(*A.shape, k, num)
+    params['A'].value = A
+    params['y'].value = y
     params['beta'].value = beta
-    params['W'].value = W.numpy()
+    params['W'].value = W
 
     problem.solve()
 
-    return torch.tensor(params['x'].value, dtype=torch.float)
+    return params['x'].value
 
 @functools.lru_cache()  # caching because making the problem object is slow
-def setup_cvxpy_problem(A, k, batch_size=1):
+def setup_cvxpy_problem(m, n, k, batch_size=1):
     """
     sets up a cvxpy Problem representing
+
     argmin_x 1/2||Ax - y||_2^2 + beta||Wx||_1
-    where A and beta are fixed and
-    y and W are left as free parameters
+
+    where A, y, beta, and W are left as free parameters
 
     A: m x n
     x: n x batch_size
     y: m x batch_size
-
     beta: scalar
     W: k x n
+
     """
-    m, n = A.shape
+    A = cp.Parameter((m,n), name='A')
     x = cp.Variable((n, batch_size), name='x')
     y = cp.Parameter((m, batch_size), name='y')
     beta = cp.Parameter(name='beta', nonneg=True)
@@ -115,26 +124,38 @@ def setup_cvxpy_problem(A, k, batch_size=1):
     constraint = [W @ x == z]  # writing with this splitting makes is_dpp True
     problem = cp.Problem(cp.Minimize(objective_fn), constraint)
 
-    params = {'y':y,
-              'beta':beta,
-              'W':W,
-              'z':z,
-              'x':x}
+    params = {
+        'A':A,
+        'y':y,
+        'beta':beta,
+        'W':W,
+        'z':z,
+        'x':x
+    }
 
     return problem, params
 
 def make_signal(sig_type, n, **kwargs):
-    if sig_type == 'piecewise_const':
-        make_piecewise_const_signal(n, **kwargs)
+    if sig_type in ('piecewise_constant', 'piecewise_const'):
+        sigs = make_piecewise_const_signal(n, **kwargs)
     elif sig_type == 'cosines':
-        make_cosines_signal(n, **kwargs)
+        sigs = make_cosines_signal(n, **kwargs)
+    else:
+        raise ValueError(sig_type)
+
+    return sigs
 
 def make_piecewise_const_signal(n, jump_freq=0.1, num_signals=1):
-    jumps = torch.rand(n, num_signals) <= jump_freq
-    heights = torch.randn(n, num_signals)
-    heights[~jumps] = 0
-    sigs = heights.cumsum(dim=0)
-    sigs = sigs - sigs.mean(dim=0) + torch.randn(num_signals)
+    """
+    piecewise constant signals in the range [0, 1)
+    each piece height is chosen uniformly at random
+    """
+    jumps = np.random.rand(n, num_signals) <= jump_freq
+    inds = np.cumsum(jumps, axis=0)
+    heights = np.random.rand(n, num_signals)
+
+    sigs = heights[inds, range(num_signals)]
+
     return sigs
 
 def make_cosines_signal(n, num_cosines):
@@ -142,19 +163,19 @@ def make_cosines_signal(n, num_cosines):
 
 
 def make_measurement(x, A, sigma):
-    y = A @ x + sigma * torch.randn_like(x)
+    y = A @ x + sigma * np.random.randn(*x.shape)
     return y
 
 
-def make_dataset(A, num_signals, sigma):
-    x = make_signal(A.shape[1], num_signals=num_signals)
+def make_dataset(signal_type, A, num_signals, sigma):
+    x = make_signal(signal_type, A.shape[1], num_signals=num_signals)
     y = make_measurement(x, A, sigma)
     return Dataset(x=x, y=y)
 
 def patch_dataset(num_signals,sigma):
     import hdf5storage
     ##Import data
-    mat = hdf5storage.loadmat('patch.mat') 
+    mat = hdf5storage.loadmat('patch.mat')
     x = mat['impatc']
     y = mat['impatn']   ##Generate two types of measurements, 1) noise added in image domain (y), 2) noise added in patch domain (y1)
     ##Subtract mean
@@ -174,14 +195,15 @@ def patch_dataset(num_signals,sigma):
     ##Select subset of data to work with
     x=x[:,:num_signals]
     y1=y1[:,:num_signals]
-    
+
     return Dataset(x=x, y=y1)
 
 
 
 
 def main(A, beta, W0, train,
-         learning_rate, num_steps, print_interval=1):
+         learning_rate, num_steps, print_interval=1,
+         sign_threshold=1e-6):
     """
     k : sparse code length
 
@@ -191,7 +213,7 @@ def main(A, beta, W0, train,
     x, y = train
     train_length = x.shape[1]
 
-    W = W0.clone()
+    W = torch.tensor(W0)
     W.requires_grad_(True)
 
     MSE_history = torch.full((train_length,), np.nan)
@@ -210,21 +232,21 @@ def main(A, beta, W0, train,
         y_cur = y[:, index:index+1]
         x_cur = x[:, index:index+1]
         with torch.no_grad():
-            x_star = solve_lasso(A, y_cur, beta, W)
+            x_star = solve_lasso(A, y_cur, beta, W.numpy())
             # threshold = find_optimal_thres(x_star, W, y_cur , beta)
-        W0, Wpm, s = find_signs(x_star, W)
-        x_closed = closed_form(W0, Wpm, s, y_cur, beta)
+        W0, Wpm, s = find_signs(torch.tensor(x_star), W, threshold=sign_threshold)
+        x_closed = closed_form(W0, Wpm, s, torch.tensor(y_cur), beta)
 
         # check that x_closed is accurate
         with torch.no_grad():
-            J_star = eval_lasso(A, x_star, y_cur, beta, W)
-            J_closed = eval_lasso(A, x_closed, y_cur, beta, W)
+            J_star = eval_lasso(A, x_star, y_cur, beta, W.numpy())
+            J_closed = eval_lasso(A, x_closed.numpy(), y_cur, beta, W.numpy())
             gap = np.abs(J_closed - J_star)
             if gap/J_star > 1e-2:
                 print(f'large gap: J_closed={J_closed:.3e}, '
                       f'J_star={J_star:.3e}')
 
-        loss = MSE(x_closed, x_cur)
+        loss = MSE(x_closed, torch.tensor(x_cur))
         last_loss = loss.item()
         MSE_history[index] = last_loss
         epoch_loss = np.nanmean(MSE_history)
@@ -236,7 +258,7 @@ def main(A, beta, W0, train,
             print(f'{step:<6d}{epoch:<6d}{index:<6d}'
                   f'{last_loss:<15.3e}{epoch_loss:<15.3e}')
 
-    return W.detach()
+    return W.detach().numpy()
 
 
 
@@ -376,8 +398,7 @@ def min_golden(f, a, b, tol=1e-5):
         return (c, b)
 
 
-
-def find_signs(x, W, threshold=1e-4):
+def find_signs(x, W, threshold=1e-6):
     """
     given x* and W, find the necessary sign matrices:
     W_0, W_pm, and s
@@ -432,12 +453,12 @@ def make_conv(h, n):
     m = len(h)
     pad = n-m # adds to beginning and end
     h_repeat = torch.nn.functional.unfold(
-        h.view(1, 1, -1, 1), (n, 1),
+        torch.from_numpy(h).view(1, 1, -1, 1), (n, 1),
         padding=(pad, 0))
-    return h_repeat[0].T.flip(1)
+    return h_repeat[0].T.flip(1).numpy()
 
 def make_TV(n):
-    return make_conv(torch.tensor([1.0, -1.0]), n)
+    return make_conv(np.array([1.0, -1.0]), n)
 
 def TV_denoise(m,x1,y1,b_opt):
     """
@@ -457,7 +478,7 @@ def plot_denoising(data, beta, W, max_signals=3, **kwargs):
     """
     plot examples of the denoising results obtained with W
     """
-    A = torch.eye(data.x.shape[0])
+    A = np.eye(data.x.shape[0])
     x_star = solve_lasso(A, data.y[:, :max_signals], beta, W)
     x_gt = data.x
     fig, axes = plt.subplots(x_star.shape[1], 1)
