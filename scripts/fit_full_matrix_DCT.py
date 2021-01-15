@@ -15,14 +15,14 @@ def config():
     num_steps = 1e6 # 1e5 takes a 30 minutes, can give good results
     sign_threshold = 1e-4
 
-    signal_type = 'piecewise_constant'
+    signal_type = 'DCT-sparse'
     n = 64
     noise_sigma = 1e-1
 
     forward_model_type = 'identity'
     num_training = 10000
-    transform_type = 'identity'
-    transform_scale = 1e-2 #1e-2 might be good
+    transform_type = 'identity' # start with identity for learning
+    transform_scale = 1e-2 # 1e-2 seems usually good
     num_testing = 50
     SEED = 0
 

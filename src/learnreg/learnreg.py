@@ -1,52 +1,55 @@
 """
-
 Assume everything is a numpy array.
 Try to keep everything a numpy array.
 """
-
 import numpy as np
+import scipy
 import torch
 import cvxpy as cp
-import matplotlib.pyplot as plt
 import collections
 import random
 import functools
 
-from cvxpylayers.torch import CvxpyLayer
 
 # datatypes
 Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 
 # top-level driver code
-def learn_for_denoising(signal_type, n, num_signals, noise_sigma, SEED, learn_opts):
-    # init
-    torch.manual_seed(SEED)  # make repeatable
+
+
+#
+def main(_run, signal_type,
+         n,
+         forward_model_type,
+         noise_sigma,
+         num_training,
+         transform_type,
+         transform_scale,
+         num_testing,
+         SEED,
+         learning_rate,
+         num_steps,
+         sign_threshold):
+
     np.random.seed(SEED)
-
-    # setup data
-    A = np.eye(n, n)
-    train = make_dataset(signal_type, A, num_signals=num_signals, sigma=noise_sigma)
-
-    baseline_MSE = MSE(A.T @ train.y, train.x)
-    print(f'baseline: MSE(ATy, x_GT) = {baseline_MSE: .5e}')
-
-    # setup transform
-    #W = torch.randn(n-1, n)
-    #W = make_conv(torch.ones(3), n)
-    W = make_conv(np.ones(1), n)
-    W = W - W.mean(axis=1, keepdims=True)
-    W = W[1:, :]  # to let W be full row rank
-    #W = make_TV(n)
+    A = make_foward_model(forward_model_type, n)
+    train = make_dataset(signal_type, A, noise_sigma, num_training)
+    W = make_transform(transform_type, n, transform_scale)
     W0 = W.copy()
 
-    beta = find_optimal_beta(A, train.x[:, :10], train.y[:, :10], W,
-                             upper=1e0, lower=0)
-    print(f'optimal beta: {beta: .5e}')
+    beta = 1.0
+    print_interval = 100
+    W = do_learning(A, beta, W, train, learning_rate, num_steps, print_interval, sign_threshold, logger=_run)
 
-    # learn
-    W = main(A, beta, W, train, **learn_opts)
+    test = make_dataset(signal_type, A, noise_sigma, num_testing)
 
-    return train, A, W0, W, beta
+    #beta_W = 1.0
+    beta_W = find_optimal_beta(A, test.x, test.y, W, 1e2).item()
+    MSE = eval_upper(A, test.x, test.y, beta_W, W).item()
+
+    _run.info['MSE'] = MSE
+    _run.info['beta_W'] = beta_W
+    _run.info['W'] = W
 
 
 def make_opti(algo, W, opts):
@@ -136,10 +139,10 @@ def setup_cvxpy_problem(m, n, k, batch_size=1):
     return problem, params
 
 def make_signal(sig_type, n, **kwargs):
-    if sig_type in ('piecewise_constant', 'piecewise_const'):
+    if sig_type == 'piecewise_constant':
         sigs = make_piecewise_const_signal(n, **kwargs)
-    elif sig_type == 'cosines':
-        sigs = make_cosines_signal(n, **kwargs)
+    elif sig_type == 'DCT-sparse':
+        sigs = make_DCT_signal(n, **kwargs)
     else:
         raise ValueError(sig_type)
 
@@ -158,8 +161,19 @@ def make_piecewise_const_signal(n, jump_freq=0.1, num_signals=1):
 
     return sigs
 
-def make_cosines_signal(n, num_cosines):
-    pass
+def make_DCT_signal(n, nonzero_freq=0.1, num_signals=1):
+    """
+    make signals that are well-sparsified by the DCT,
+
+    specifically, scipy.fft.dct(sigs, axis=0) will be sparse
+    so will
+    W = lr.make_transform('DCT', n)
+    W @ sigs
+    """
+    support = np.random.rand(n, num_signals) <= nonzero_freq
+    coeffs = 2 * (np.random.rand(n, num_signals) - 0.5) * support
+    sigs = scipy.fft.idct(coeffs, axis=0, norm="ortho")
+    return sigs
 
 
 def make_measurement(x, A, sigma):
@@ -167,9 +181,10 @@ def make_measurement(x, A, sigma):
     return y
 
 
-def make_dataset(signal_type, A, num_signals, sigma):
+def make_dataset(signal_type, A, noise_sigma, num_signals):
+
     x = make_signal(signal_type, A.shape[1], num_signals=num_signals)
-    y = make_measurement(x, A, sigma)
+    y = make_measurement(x, A, noise_sigma)
     return Dataset(x=x, y=y)
 
 def patch_dataset(num_signals,sigma):
@@ -201,13 +216,15 @@ def patch_dataset(num_signals,sigma):
 
 
 
-def main(A, beta, W0, train,
-         learning_rate, num_steps, print_interval=1,
-         sign_threshold=1e-6):
+def do_learning(A, beta, W0, train,
+                learning_rate, num_steps, print_interval=1,
+                sign_threshold=1e-6, logger=None):
     """
     k : sparse code length
 
     train : NamedTupe with fields x and y
+
+    logger : sacred.Run object for storing online metrics
     """
 
     x, y = train
@@ -242,9 +259,12 @@ def main(A, beta, W0, train,
             J_star = eval_lasso(A, x_star, y_cur, beta, W.numpy())
             J_closed = eval_lasso(A, x_closed.numpy(), y_cur, beta, W.numpy())
             gap = np.abs(J_closed - J_star)
+
             if gap/J_star > 1e-2:
                 print(f'large gap: J_closed={J_closed:.3e}, '
                       f'J_star={J_star:.3e}')
+                if logger is not None:
+                    logger.log_scalar('gap', gap, step)
 
         loss = MSE(x_closed, torch.tensor(x_cur))
         last_loss = loss.item()
@@ -257,6 +277,10 @@ def main(A, beta, W0, train,
         if step % print_interval == 0 or step == num_steps-1:
             print(f'{step:<6d}{epoch:<6d}{index:<6d}'
                   f'{last_loss:<15.3e}{epoch_loss:<15.3e}')
+
+            if logger is not None:
+                logger.log_scalar('train.loss', last_loss, step)
+
 
     return W.detach().numpy()
 
@@ -433,6 +457,47 @@ def optimize(D,bh,beta):
     #print("optimal objective value: {}".format(obj.value))
     return torch.tensor(x_l1.value, dtype=torch.float)
 
+def TV_denoise(m,x1,y1,b_opt):
+    """
+    b_opt is the penalty strength
+    y1 is the noisy version of x1
+    xrec is the TV reconstructed denoise signal
+    """
+    tv=torch.zeros(m)
+    tv[0]=1.0
+    tv[1]=-1.0
+    TV=b_opt*create_circulant(tv)
+    xrec=optimize(TV,y1,1)
+    return xrec, src.MSE(x1,xrec)
+
+# forward models
+def make_foward_model(forward_model_type, n):
+    if forward_model_type == 'identity':
+        A = np.eye(n)
+    else:
+        raise ValueError(forward_model_type)
+
+    return A
+
+# transforms ----------------------
+
+def make_transform(transform_type, n, scale=1.0):
+    if transform_type == 'identity':
+        W = np.eye(n)
+        W = W - W.mean(axis=1, keepdims=True)
+        W = W[1:, :]  # to let W be full row rank
+    elif transform_type == 'TV':
+        W = make_TV(n)
+    elif transform_type == 'DCT':
+        W = scipy.fft.dct(np.eye(n), axis=0, norm='ortho')
+    else:
+        raise ValueError(transform_type)
+
+
+    return scale * W
+
+def make_TV(n):
+    return make_conv(np.array([1.0, -1.0]), n)
 
 def make_conv(h, n):
     """
@@ -456,72 +521,3 @@ def make_conv(h, n):
         torch.from_numpy(h).view(1, 1, -1, 1), (n, 1),
         padding=(pad, 0))
     return h_repeat[0].T.flip(1).numpy()
-
-def make_TV(n):
-    return make_conv(np.array([1.0, -1.0]), n)
-
-def TV_denoise(m,x1,y1,b_opt):
-    """
-    b_opt is the penalty strength
-    y1 is the noisy version of x1
-    xrec is the TV reconstructed denoise signal
-    """
-    tv=torch.zeros(m)
-    tv[0]=1.0
-    tv[1]=-1.0
-    TV=b_opt*create_circulant(tv)
-    xrec=optimize(TV,y1,1)
-    return xrec, src.MSE(x1,xrec)
-
-# plotting
-def plot_denoising(data, beta, W, max_signals=3, **kwargs):
-    """
-    plot examples of the denoising results obtained with W
-    """
-    A = np.eye(data.x.shape[0])
-    x_star = solve_lasso(A, data.y[:, :max_signals], beta, W)
-    x_gt = data.x
-    fig, axes = plt.subplots(x_star.shape[1], 1)
-    for i, ax in enumerate(axes):
-        plot_recon(
-            x_gt[:, i],
-            data.y[:, i:i+1],
-            x_star[:, i:i+1], ax=ax, **kwargs)
-    return fig, ax
-
-def plot_recon_sparsity(A, data, beta, W, max_signals=3, **kwargs):
-    """
-    make a plot to evaluate if W@x_star is sparse
-    """
-    x_star = solve_lasso(A, data.y[:, :max_signals], beta, W)
-    Wx_star = W @ x_star
-
-    fig, axes = plt.subplots(x_star.shape[1], 1)
-
-    for i, ax in enumerate(axes):
-        ax.stem(Wx_star[:, i])
-    return fig, ax
-
-
-def plot_recon(x_gt, y, x_star, ax=None, **kwargs):
-    if ax is None:
-        fig, ax = plt.subplots()
-    else:
-        fig = ax.get_figure()
-
-    ax.plot(x_gt, color='k', label='x_GT')
-    ax.plot(y, label='y', color='tab:blue')
-    ax.plot(x_star, color='tab:orange', linestyle='dashed', label='x*')
-
-    ax.legend(('x_GT', 'y', 'x*'))
-
-    return fig, ax
-
-
-def show_W(W_0, W):
-    fig, ax = plt.subplots(1, 2)
-    ax[0].imshow(W_0)
-    ax[0].set_title('W_0')
-    ax[1].imshow(W)
-    ax[1].set_title('W*')
-    fig.show()
