@@ -12,7 +12,7 @@ ex.observers.append(sacred.observers.MongoObserver())
 @ex.config
 def config():
     learning_rate = 1e-3
-    num_steps = 1e6 # 1e5 takes a 30 minutes, can give good results
+    num_steps = int(1e6) # 1e5 takes a 30 minutes, can give good results
     sign_threshold = 1e-4
 
     signal_type = 'DCT-sparse'
