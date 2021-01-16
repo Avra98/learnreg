@@ -18,8 +18,9 @@ Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 
 
 #
-def main(_run, signal_type,
+def main(signal_type,
          n,
+         k,
          forward_model_type,
          noise_sigma,
          num_training,
@@ -29,12 +30,13 @@ def main(_run, signal_type,
          SEED,
          learning_rate,
          num_steps,
-         sign_threshold):
+         sign_threshold,
+         _run=None):
 
     np.random.seed(SEED)
     A = make_foward_model(forward_model_type, n)
     train = make_dataset(signal_type, A, noise_sigma, num_training)
-    W = make_transform(transform_type, n, transform_scale)
+    W = make_transform(transform_type, n, k, transform_scale)
     W0 = W.copy()
 
     beta = 1.0
@@ -47,9 +49,12 @@ def main(_run, signal_type,
     beta_W = find_optimal_beta(A, test.x, test.y, W, 1e2).item()
     MSE = eval_upper(A, test.x, test.y, beta_W, W).item()
 
-    _run.info['MSE'] = MSE
-    _run.info['beta_W'] = beta_W
-    _run.info['W'] = W
+    if _run is not None:
+        _run.info['MSE'] = MSE
+        _run.info['beta_W'] = beta_W
+        _run.info['W'] = W
+    else:
+        return MSE, beta_W, W
 
 
 def make_opti(algo, W, opts):
@@ -278,8 +283,8 @@ def do_learning(A, beta, W0, train,
             print(f'{step:<6d}{epoch:<6d}{index:<6d}'
                   f'{last_loss:<15.3e}{epoch_loss:<15.3e}')
 
-            if logger is not None:
-                logger.log_scalar('train.loss', last_loss, step)
+            #if logger is not None:
+            #    logger.log_scalar('train.loss', last_loss, step)
 
 
     return W.detach().numpy()
@@ -481,23 +486,28 @@ def make_foward_model(forward_model_type, n):
 
 # transforms ----------------------
 
-def make_transform(transform_type, n, scale=1.0):
+
+def make_transform(transform_type, n, k, scale=1.0):
+    k = int(k)
     if transform_type == 'identity':
-        W = np.eye(n)
+        #assert k <= n
+        W = np.eye(k, n)
         W = W - W.mean(axis=1, keepdims=True)
-        W = W[1:, :]  # to let W be full row rank
     elif transform_type == 'TV':
-        W = make_TV(n)
+        W = make_conv(np.array([1.0, -1.0]), n)
+        #assert k <= W.shape[0]
+        W = W[:k]
     elif transform_type == 'DCT':
+        #assert k <= n
         W = scipy.fft.dct(np.eye(n), axis=0, norm='ortho')
+        W = W[:k]
+    elif transform_type == 'random':
+        W = np.random.randn(k, n)
     else:
         raise ValueError(transform_type)
 
-
     return scale * W
 
-def make_TV(n):
-    return make_conv(np.array([1.0, -1.0]), n)
 
 def make_conv(h, n):
     """

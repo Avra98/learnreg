@@ -3,52 +3,51 @@ code for examining the results of experiments,
 including making plots and text reports
 """
 import matplotlib.pyplot as plt
+import pymongo
+import jsonpickle
+import jsonpickle.ext.numpy as jsonpickle_numpy
+from argparse import Namespace
+import numpy as np
 
+import learnreg as lr
 
-"""
+jsonpickle_numpy.register_handlers()
 
-# refit W
-#beta_W = lr.find_optimal_beta(A, test.x, test.y, W, 1e1)
-beta_W = beta
-MSE_learned = lr.eval_upper(A, test.x, test.y, beta_W, W).item()
+def make_plots(exp_id, prefix=None):
+    if prefix is not None:
+        prefix = prefix + ' '
 
-# show results
-plt.close('all')
+    client = pymongo.MongoClient()
+    db = client.sacred
 
-fig, ax = lr.plot_denoising(test, beta_W, W)
-fig.suptitle(f'learnred reconstruction results, MSE:{MSE_learned:.3e}')
-fig.tight_layout()
-fig.show()
+    run = db.runs.find_one({'_id': exp_id})
 
-# compare to TV
-TV = lr.make_TV(n)
+    W = jsonpickle.unpickler.Unpickler().restore(run['info']['W'])
 
-beta_TV = lr.find_optimal_beta(A, test.x, test.y, TV, 1e1)
+    cfg = Namespace(**run['config'])
+    beta = run['info']['beta_W']
 
-MSE_TV = lr.eval_upper(A, test.x, test.y, beta_TV, TV).item()
+    np.random.seed(cfg.SEED)
 
-fig, ax = lr.plot_denoising(test, beta_TV, TV)
-fig.suptitle(f'TV reconstruction results, MSE:{MSE_TV:.3e}')
-fig.tight_layout()
-fig.show()
+    A = lr.make_foward_model(cfg.forward_model_type, cfg.n)
+    W0 = lr.make_transform(cfg.transform_type, cfg.n, cfg.n, cfg.transform_scale)
+    test = lr.make_dataset(cfg.signal_type, A, cfg.noise_sigma, cfg.num_testing)
 
-# show W0 and W
-lr.show_W(W0, W)
+    beta = lr.find_optimal_beta(A, test.x, test.y, W, 2e1).item()
+    MSE = lr.eval_upper(A, test.x, test.y, beta, W).item()
 
-# todo: we are getting a lot of wrong x_closed,
-# can we fix this via something clever with the dual problem?
+    fig, ax = plot_denoising(test, beta, W)
+    fig.suptitle(prefix + f'reconstructions\nbeta={beta:.3e}, testing MSE={MSE:.3e}')
+    fig.tight_layout()
+    fig.show()
 
-# are the reconstructions actually sparse?
-fig, ax = lr.plot_recon_sparsity(A, test, beta_W, W)
-fig.suptitle('W_learned @ x*(W_learned)')
-fig.show()
-fig, ax = lr.plot_recon_sparsity(A, test, beta_TV, TV)
-fig.suptitle('W_TV @ x*(W_TV)')
-fig.show()
+    fig, ax = plot_recon_sparsity(A, test, beta, W)
+    fig.suptitle(prefix + 'W @ x*(W)')
+    fig.show()
 
-print(MSE_learned, MSE_TV)
-
-"""
+    fig, ax = show_W(W0, W)
+    fig.suptitle(prefix)
+    fig.show()
 
 
 # plotting ------------------------
@@ -57,7 +56,7 @@ def plot_denoising(data, beta, W, max_signals=3, **kwargs):
     plot examples of the denoising results obtained with W
     """
     A = np.eye(data.x.shape[0])
-    x_star = solve_lasso(A, data.y[:, :max_signals], beta, W)
+    x_star = lr.solve_lasso(A, data.y[:, :max_signals], beta, W)
     x_gt = data.x
     fig, axes = plt.subplots(x_star.shape[1], 1)
     for i, ax in enumerate(axes):
@@ -71,7 +70,7 @@ def plot_recon_sparsity(A, data, beta, W, max_signals=3, **kwargs):
     """
     make a plot to evaluate if W@x_star is sparse
     """
-    x_star = solve_lasso(A, data.y[:, :max_signals], beta, W)
+    x_star = lr.solve_lasso(A, data.y[:, :max_signals], beta, W)
     Wx_star = W @ x_star
 
     fig, axes = plt.subplots(x_star.shape[1], 1)
@@ -102,4 +101,5 @@ def show_W(W_0, W):
     ax[0].set_title('W_0')
     ax[1].imshow(W)
     ax[1].set_title('W*')
-    fig.show()
+    fig.tight_layout()
+    return fig, ax

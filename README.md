@@ -11,3 +11,8 @@
 
 ## Working with the code
 * `conda activate learnreg1d`
+
+## mongodb
+* `mongod --dbpath monogodb/`
+* `omniboard`
+* point browser to `localhost:9000`

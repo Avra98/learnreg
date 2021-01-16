@@ -9,10 +9,11 @@ import learnreg as lr
 
 ex = sacred.Experiment()
 ex.observers.append(sacred.observers.MongoObserver())
+
 @ex.config
 def config():
     learning_rate = 1e-3
-    num_steps = 1e6 # 1e5 takes a 30 minutes, can give good results
+    num_steps = int(1e6) # 1e5 takes a 30 minutes, can give good results
     sign_threshold = 1e-4
 
     signal_type = 'piecewise_constant'
@@ -21,8 +22,11 @@ def config():
 
     forward_model_type = 'identity'
     num_training = 10000
+
     transform_type = 'identity'
+    k = 64
     transform_scale = 1e-2 #1e-2 might be good
+
     num_testing = 50
     SEED = 0
 
