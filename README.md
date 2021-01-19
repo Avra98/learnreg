@@ -13,6 +13,9 @@
 * `conda activate learnreg1d`
 
 ## mongodb
-* `mongod --dbpath monogodb/`
-* `omniboard`
+* on digilink: `mongod --dbpath monogodb/`
+* on local machine:
+  * `ssh -L 27017:localhost:27017 -N -p 9998 localhost -l mccann13 &` 
+  * `ssh -L 27017:localhost:27017 -N -p 9998 localhost -l mccann13 &`
+  * `omniboard`
 * point browser to `localhost:9000`

@@ -6,6 +6,7 @@ dependencies:
   - pip=20.2.3
   - matplotlib=3.3.1
   - pymongo=3.11.2
+  - mongodb=4.0.3
   - pip:
       - -e src
       - cvxpylayers==0.1.4
