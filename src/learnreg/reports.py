@@ -13,6 +13,13 @@ import learnreg as lr
 
 jsonpickle_numpy.register_handlers()
 
+
+
+def get_array_from_run(run, array_name):
+    X = jsonpickle.unpickler.Unpickler().restore(run['info'][array_name])
+    return X
+
+
 def make_plots(exp_id, prefix=None):
     if prefix is not None:
         prefix = prefix + ' '
@@ -22,7 +29,7 @@ def make_plots(exp_id, prefix=None):
 
     run = db.runs.find_one({'_id': exp_id})
 
-    W = jsonpickle.unpickler.Unpickler().restore(run['info']['W'])
+    W = get_array_from_run(run, 'W')
 
     cfg = Namespace(**run['config'])
     beta = run['info']['beta_W']

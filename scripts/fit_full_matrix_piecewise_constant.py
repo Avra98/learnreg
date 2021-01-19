@@ -13,7 +13,7 @@ ex.observers.append(sacred.observers.MongoObserver())
 @ex.config
 def config():
     learning_rate = 1e-3
-    num_steps = int(1e6) # 1e5 takes a 30 minutes, can give good results
+    num_steps = int(1e3) # 1e5 takes a 30 minutes, can give good results
     sign_threshold = 1e-4
 
     signal_type = 'piecewise_constant'
@@ -25,7 +25,7 @@ def config():
 
     transform_type = 'identity'
     k = 64
-    transform_scale = 1e-2 #1e-2 might be good
+    transform_scale = 1e-2
 
     num_testing = 50
     SEED = 0

@@ -39,22 +39,22 @@ def main(signal_type,
     W = make_transform(transform_type, n, k, transform_scale)
     W0 = W.copy()
 
-    beta = 1.0
     print_interval = 100
-    W = do_learning(A, beta, W, train, learning_rate, num_steps, print_interval, sign_threshold, logger=_run)
+    W = do_learning(A, 1.0, W, train, learning_rate, num_steps, print_interval, sign_threshold, logger=_run)
 
     test = make_dataset(signal_type, A, noise_sigma, num_testing)
 
-    #beta_W = 1.0
-    beta_W = find_optimal_beta(A, test.x, test.y, W, 1e2).item()
-    MSE = eval_upper(A, test.x, test.y, beta_W, W).item()
+    beta = find_optimal_beta(A, test.x, test.y, W)
+    MSE = eval_upper(A, test.x, test.y, beta, W)
 
     if _run is not None:
-        _run.info['MSE'] = MSE
-        _run.info['beta_W'] = beta_W
+        _run.info['A'] = A
+        _run.info['MSE'] = float(MSE)
+        _run.info['beta'] = float(beta)
+        _run.info['W0'] = W0
         _run.info['W'] = W
     else:
-        return MSE, beta_W, W
+        return MSE, beta, W
 
 
 def make_opti(algo, W, opts):
@@ -75,6 +75,7 @@ def eval_lasso(A, x, y, beta, W):
     k = W.shape[0]
     num = y.shape[1]
     problem, params = setup_cvxpy_problem(*A.shape, k, num)
+    params['A'].value = A
     params['y'].value = y
     params['beta'].value = beta
     params['W'].value = W
@@ -243,7 +244,7 @@ def do_learning(A, beta, W0, train,
     # main loop
     opti = torch.optim.SGD((W,), learning_rate)
 
-    print(f'{"step":6s}{"epoch":6s}{"index":6s}'
+    print(f'{"step":12s}{"epoch":6s}{"index":6s}'
           f'{"cur loss":15s}{"epoch avg loss":15s}')
     for step in range(num_steps):
         epoch = step // train_length
@@ -280,17 +281,13 @@ def do_learning(A, beta, W0, train,
 
         # print status line
         if step % print_interval == 0 or step == num_steps-1:
-            print(f'{step:<6d}{epoch:<6d}{index:<6d}'
+            print(f'{step:<12d}{epoch:<6d}{index:<6d}'
                   f'{last_loss:<15.3e}{epoch_loss:<15.3e}')
 
             #if logger is not None:
             #    logger.log_scalar('train.loss', last_loss, step)
 
-
-    return W.detach().numpy()
-
-
-
+    return np.array(W.detach())
 
 
 # utilities
@@ -338,7 +335,18 @@ def permute_for_display(W):
     #corr = np.fft.irfft( np.conj(FW[0:1, :]) * FW, axis=1)
 
 
-def find_optimal_beta(A, x_GT, y, W, upper, lower=0):
+def find_optimal_beta(A, x_GT, y, W, lower=0, upper=None):
+    # heuristic to pick the upper limit
+    if upper is None:
+        cost_zero = eval_lasso(A, np.zeros_like(x_GT), y, 0.0, W)
+        data_GT = eval_lasso(A, x_GT, y, 0.0, W)
+        reg_GT = eval_lasso(np.zeros_like(A), x_GT, np.zeros_like(y), 1.0, W)
+
+        upper = (cost_zero - data_GT) / reg_GT
+
+        upper = max(upper, lower)
+
+
     def J(beta):
         x_star = solve_lasso(A, y, beta, W)
         return MSE(x_star, x_GT)
@@ -347,6 +355,7 @@ def find_optimal_beta(A, x_GT, y, W, upper, lower=0):
     val = (a+b)/2
     if np.abs(val-lower)/upper < 1e-2 or np.abs(val-upper)/upper < 1e-2:
         print("warning, optimal beta is close to one of the limits")
+
     return (a+b)/2
 
 
