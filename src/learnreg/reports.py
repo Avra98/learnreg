@@ -14,6 +14,12 @@ import learnreg as lr
 jsonpickle_numpy.register_handlers()
 
 
+def get_runs_from_db():
+    client = pymongo.MongoClient()
+    db = client.sacred
+    return db.runs
+
+
 
 def get_array_from_run(run, array_name):
     X = jsonpickle.unpickler.Unpickler().restore(run['info'][array_name])
@@ -24,10 +30,8 @@ def make_plots(exp_id, prefix=None):
     if prefix is not None:
         prefix = prefix + ' '
 
-    client = pymongo.MongoClient()
-    db = client.sacred
-
-    run = db.runs.find_one({'_id': exp_id})
+    runs = get_runs_from_db()
+    run = runs.find_one({'_id': exp_id})
 
     W = get_array_from_run(run, 'W')
 

@@ -32,4 +32,4 @@ def config():
 
 
 ex.automain(lr.main)
-ex.run_commandline()
+ex.run_commandline(['', 'print_config'])
