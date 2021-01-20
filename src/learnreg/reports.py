@@ -8,6 +8,7 @@ import jsonpickle
 import jsonpickle.ext.numpy as jsonpickle_numpy
 from argparse import Namespace
 import numpy as np
+import scipy.optimize
 
 import learnreg as lr
 
@@ -33,19 +34,17 @@ def make_plots(exp_id, prefix=None):
     runs = get_runs_from_db()
     run = runs.find_one({'_id': exp_id})
 
-    W = get_array_from_run(run, 'W')
-
     cfg = Namespace(**run['config'])
-    beta = run['info']['beta_W']
+
+    W = get_array_from_run(run, 'W')
+    beta = run['info']['beta']
+    A = get_array_from_run(run, 'A')
+    W0 = get_array_from_run(run, 'W0')
+    MSE = run['info']['MSE']
 
     np.random.seed(cfg.SEED)
 
-    A = lr.make_foward_model(cfg.forward_model_type, cfg.n)
-    W0 = lr.make_transform(cfg.transform_type, cfg.n, cfg.n, cfg.transform_scale)
     test = lr.make_dataset(cfg.signal_type, A, cfg.noise_sigma, cfg.num_testing)
-
-    beta = lr.find_optimal_beta(A, test.x, test.y, W, 2e1).item()
-    MSE = lr.eval_upper(A, test.x, test.y, beta, W).item()
 
     fig, ax = plot_denoising(test, beta, W)
     fig.suptitle(prefix + f'reconstructions\nbeta={beta:.3e}, testing MSE={MSE:.3e}')
@@ -59,6 +58,8 @@ def make_plots(exp_id, prefix=None):
     fig, ax = show_W(W0, W)
     fig.suptitle(prefix)
     fig.show()
+
+    return W
 
 
 # plotting ------------------------
@@ -114,3 +115,32 @@ def show_W(W_0, W):
     ax[1].set_title('W*')
     fig.tight_layout()
     return fig, ax
+
+
+def rearrange_to_baseline(W, B):
+    """
+    return a copy of W with rows rearranged
+    to match with B
+
+
+    """
+
+    # normalize rows to remove effect of scaling
+    Wnorm = W / np.sqrt(np.sum(W**2, axis=1, keepdims=True))
+    Bnorm = B / np.sqrt(np.sum(B**2, axis=1, keepdims=True))
+
+    corr = Wnorm @ Bnorm.T  # shape: (k1, k2)
+
+    row_inds, col_inds = scipy.optimize.linear_sum_assignment(np.abs(corr), maximize=True)
+
+    Wout = np.full((max(W.shape[0], B.shape[0]), B.shape[1]), np.nan)
+
+    # swap signs where corr was negative
+    Wout[col_inds] = W[row_inds] * np.sign(corr[row_inds, col_inds])[:, np.newaxis]
+
+    if B.shape[0] < W.shape[0]:  # put leftover rows at the bottom
+        leftover_inds = list(set(range(W.shape[0])) - set(row_inds))
+        Wout[B.shape[0]:] = W[leftover_inds]
+
+
+    return Wout
