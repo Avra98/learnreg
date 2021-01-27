@@ -5,19 +5,12 @@ Try to keep everything a numpy array.
 import numpy as np
 import scipy
 import torch
-import cvxpy as cp
 import collections
-import random
-import functools
-
 
 # datatypes
 Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 
 # top-level driver code
-
-
-#
 def main(signal_type,
          n,
          k,
@@ -137,57 +130,24 @@ def eval_upper(A, x_GT, y, beta, W):
     x = solve_lasso(A, y, beta, W)
     return MSE(x, x_GT)
 
+class SolveLassoFunction(torch.autograd.Function):
 
-def solve_lasso(A, y, beta, W):
-    k = W.shape[0]
-    num = y.shape[1]
-    problem, params = setup_cvxpy_problem(*A.shape, k, num)
-    params['A'].value = A
-    params['y'].value = y
-    params['beta'].value = beta
-    params['W'].value = W
+    @staticmethod
+    def forward(ctx, A, y, beta, W):
+        x_star = solve_lasso(A, y, beta, np.array(W))
+        #ctx.save_for_backward(A, y, beta, W, x_star)
+        return torch.tensor(x_star)
 
-    problem.solve()
+    @staticmethod
+    def backward(ctx, grad_output):
+        #A, y, beta, W, x_star = ctx.saved_tensors
+        #W0, Wpm, s = find_signs(x_star, W)
+        #proj = torch.eye(W0.shape[1]) - torch.pinverse(W0) @ W0
+        # todo: to be continued...
+        return grad_output
 
-    return params['x'].value
 
-@functools.lru_cache()  # caching because making the problem object is slow
-def setup_cvxpy_problem(m, n, k, batch_size=1):
-    """
-    sets up a cvxpy Problem representing
 
-    argmin_x 1/2||Ax - y||_2^2 + beta||Wx||_1
-
-    where A, y, beta, and W are left as free parameters
-
-    A: m x n
-    x: n x batch_size
-    y: m x batch_size
-    beta: scalar
-    W: k x n
-
-    """
-    A = cp.Parameter((m,n), name='A')
-    x = cp.Variable((n, batch_size), name='x')
-    y = cp.Parameter((m, batch_size), name='y')
-    beta = cp.Parameter(name='beta', nonneg=True)
-    W = cp.Parameter((k, n), name='W')
-    z = cp.Variable((k, batch_size), name='z')
-
-    objective_fn = 0.5 * cp.sum_squares(A @ x - y) + beta*cp.sum(cp.abs(z))
-    constraint = [W @ x == z]  # writing with this splitting makes is_dpp True
-    problem = cp.Problem(cp.Minimize(objective_fn), constraint)
-
-    params = {
-        'A':A,
-        'y':y,
-        'beta':beta,
-        'W':W,
-        'z':z,
-        'x':x
-    }
-
-    return problem, params
 
 def make_signal(sig_type, n, **kwargs):
     if sig_type == 'piecewise_constant':
@@ -322,7 +282,14 @@ def do_learning(A, beta, W0, train,
         MSE_history[index] = last_loss
         epoch_loss = np.nanmean(MSE_history)
         loss.backward()
+
+        import IPython
+        IPython.embed()
+
+
         opti.step()
+
+
 
         # print status line
         if step % print_interval == 0 or step == num_steps-1:
@@ -500,9 +467,17 @@ def closed_form(W0, Wpm, s, y, beta):
     https://arxiv.org/pdf/1805.07682.pdf
 
     """
+    rcond = 1e-15  # cutoff for small singular values
+
     y_term = y - beta * Wpm.T @ s
-    # proj = W0.pinverse() @ W0  # todo: do we prefer this or the next line?
-    proj = W0.T @ (W0 @ W0.T).inverse() @ W0
+
+    if W0.shape[0] == 0:
+        return y_term
+
+    U, S, V = torch.svd(W0)
+    S = torch.where(S >= rcond, torch.ones_like(S), torch.zeros_like(S))
+    proj = V @ torch.diag(S) @ V.T
+
     return y_term - proj @ y_term
 
 def optimize(D,bh,beta):
