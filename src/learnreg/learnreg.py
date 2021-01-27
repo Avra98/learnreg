@@ -6,9 +6,14 @@ import numpy as np
 import scipy
 import torch
 import collections
+import functools
+
+import learnreg.opt as opt
 
 # datatypes
 Dataset = collections.namedtuple('Dataset', ['x', 'y'])
+
+solve_lasso = functools.partial(opt.solve_lasso, method='cvxpy')
 
 # top-level driver code
 def main(signal_type,
@@ -52,7 +57,7 @@ def main(signal_type,
 
 
 ##Driver code for training patches from images. Denoising is on the same patches of the images
-def main_image(filename='barbara.png',patch_size=8
+def main_image(filename,patch_size,
          forward_model_type,
          noise_sigma,
          transform_type,
@@ -74,7 +79,7 @@ def main_image(filename='barbara.png',patch_size=8
     print_interval = 100
     W = do_learning(A, beta, W, train, learning_rate, num_steps, print_interval, sign_threshold, logger=_run)
 
-    
+
 
     beta_W = 1.0
     denoised=np.zeros((patch_size**2,train.x.shape[1]))
@@ -82,7 +87,7 @@ def main_image(filename='barbara.png',patch_size=8
     batch_size=64  ## Solving lasso on all the patches faces memory issue, so solve lasso by batches
     for i in range(0,train.x.shape[1],batch_size):
         denoised[:,i:i+batch_size]=solve_lasso(A, train.y[:,i:i+batch_size], beta_W, W)
-    
+
     denoised_image=patchset2image(denoised,origin)
 
     if _run is not None:
@@ -112,7 +117,7 @@ def eval_lasso(A, x, y, beta, W):
     """
     k = W.shape[0]
     num = y.shape[1]
-    problem, params = setup_cvxpy_problem(*A.shape, k, num)
+    problem, params = opt.setup_cvxpy_problem(*A.shape, k, num)
     params['A'].value = A
     params['y'].value = y
     params['beta'].value = beta
@@ -283,13 +288,7 @@ def do_learning(A, beta, W0, train,
         epoch_loss = np.nanmean(MSE_history)
         loss.backward()
 
-        import IPython
-        IPython.embed()
-
-
         opti.step()
-
-
 
         # print status line
         if step % print_interval == 0 or step == num_steps-1:
@@ -471,13 +470,16 @@ def closed_form(W0, Wpm, s, y, beta):
 
     y_term = y - beta * Wpm.T @ s
 
+    """
     if W0.shape[0] == 0:
         return y_term
 
     U, S, V = torch.svd(W0)
     S = torch.where(S >= rcond, torch.ones_like(S), torch.zeros_like(S))
     proj = V @ torch.diag(S) @ V.T
+    """
 
+    proj = W0.T @ (W0 @ W0.T).inverse() @ W0
     return y_term - proj @ y_term
 
 def optimize(D,bh,beta):
@@ -561,25 +563,25 @@ def make_conv(h, n):
         padding=(pad, 0))
     return h_repeat[0].T.flip(1).numpy()
 
-          
+
 
 def image2patchset(noise_sigma,patch_size=8,filename='barbara.png'):
-    
+
     img = cv2.imread(filename)[:,:,0]
     noise_img = img + np.random.normal(0,noise_sigma,[img.shape[0],img.shape[1]])
     p, origin = extract_grayscale_patches( img, (patch_size,patch_size), stride=(patch_size,patch_size) )
     p1, origin1 = extract_grayscale_patches( noise_img, (patch_size,patch_size), stride=(patch_size,patch_size))
     train= patch2vector(p,p1)
     return train,origin1
-    
+
 
 def patchset2image(vector,origin):
     patch=vector2patch(vector)
     denoised_image,wgt=reconstruct_from_grayscale_patches( patch, origin, epsilon=1e-12 )
     return denoised_image
-    
-    
-    
+
+
+
 def patch2vector(p,p1):
     clean = np.reshape(p,[p.shape[1]*p.shape[1],p.shape[0]])
     noise = np.reshape(p1,[p1.shape[1]*p1.shape[1],p1.shape[0]])
@@ -591,9 +593,9 @@ def patch2vector(p,p1):
 def vector2patch(p):
     denoised = np.reshape(p,[int(p.shape[1]),int(np.sqrt(p.shape[0])),int(np.sqrt(p.shape[0]))])
     d=denoised*255
-    return d 
-          
-          
+    return d
+
+
 
 ###Image to patches and vice versa
 def extract_grayscale_patches( img, shape, offset=(0,0), stride=(1,1) ):
@@ -664,7 +666,3 @@ def reconstruct_from_grayscale_patches( patches, origin, epsilon=1e-12 ):
             wgt[origin[0]+i,origin[1]+j] += 1.0
 
     return out/np.maximum( wgt, epsilon ), wgt
-          
-                   
-          
-          
