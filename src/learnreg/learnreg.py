@@ -57,6 +57,51 @@ def main(signal_type,
         return MSE, beta, W
 
 
+
+##Driver code for training patches from images. Denoising is on the same patches of the images
+def main_image(filename='barbara.png',patch_size=8
+         forward_model_type,
+         noise_sigma,
+         transform_type,
+         transform_scale,
+         SEED,
+         learning_rate,
+         num_steps,
+         sign_threshold,
+         _run=None):
+
+    np.random.seed(SEED)
+    n=patch_size**2
+    k=n-1
+    A = make_foward_model(forward_model_type, n)
+    train,origin=image2patchset(noise_sigma,patch_size,filename='barbara.png')
+    W = make_transform(transform_type, n, k, transform_scale)
+    W0 = W.copy()
+    beta = 1.0
+    print_interval = 100
+    W = do_learning(A, beta, W, train, learning_rate, num_steps, print_interval, sign_threshold, logger=_run)
+
+    
+
+    beta_W = 1.0
+    denoised=np.zeros((patch_size**2,train.x.shape[1]))
+    #beta_W = find_optimal_beta(A, test.x, test.y, W, 1e2).item()
+    batch_size=64  ## Solving lasso on all the patches faces memory issue, so solve lasso by batches
+    for i in range(0,train.x.shape[1],batch_size):
+        denoised[:,i:i+batch_size]=solve_lasso(A, train.y[:,i:i+batch_size], beta_W, W)
+    
+    denoised_image=patchset2image(denoised,origin)
+
+    if _run is not None:
+        _run.info['MSE'] = MSE
+        _run.info['beta_W'] = beta_W
+        _run.info['W'] = W
+    else:
+        return denoised_image,W
+
+
+
+
 def make_opti(algo, W, opts):
     if algo == 'LBFGS':
         opti = torch.optim.LBFGS((W,), **opts)
@@ -540,3 +585,111 @@ def make_conv(h, n):
         torch.from_numpy(h).view(1, 1, -1, 1), (n, 1),
         padding=(pad, 0))
     return h_repeat[0].T.flip(1).numpy()
+
+          
+
+def image2patchset(noise_sigma,patch_size=8,filename='barbara.png'):
+    
+    img = cv2.imread(filename)[:,:,0]
+    noise_img = img + np.random.normal(0,noise_sigma,[img.shape[0],img.shape[1]])
+    p, origin = extract_grayscale_patches( img, (patch_size,patch_size), stride=(patch_size,patch_size) )
+    p1, origin1 = extract_grayscale_patches( noise_img, (patch_size,patch_size), stride=(patch_size,patch_size))
+    train= patch2vector(p,p1)
+    return train,origin1
+    
+
+def patchset2image(vector,origin):
+    patch=vector2patch(vector)
+    denoised_image,wgt=reconstruct_from_grayscale_patches( patch, origin, epsilon=1e-12 )
+    return denoised_image
+    
+    
+    
+def patch2vector(p,p1):
+    clean = np.reshape(p,[p.shape[1]*p.shape[1],p.shape[0]])
+    noise = np.reshape(p1,[p1.shape[1]*p1.shape[1],p1.shape[0]])
+    x=clean/255
+    y=noise/255
+    return Dataset(x=x,y=y)
+
+
+def vector2patch(p):
+    denoised = np.reshape(p,[int(p.shape[1]),int(np.sqrt(p.shape[0])),int(np.sqrt(p.shape[0]))])
+    d=denoised*255
+    return d 
+          
+          
+
+###Image to patches and vice versa
+def extract_grayscale_patches( img, shape, offset=(0,0), stride=(1,1) ):
+    """Extracts (typically) overlapping regular patches from a grayscale image
+
+    Changing the offset and stride parameters will result in images
+    reconstructed by reconstruct_from_grayscale_patches having different
+    dimensions! Callers should pad and unpad as necessary!
+
+    Args:
+        img (HxW ndarray): input image from which to extract patches
+
+        shape (2-element arraylike): shape of that patches as (h,w)
+
+        offset (2-element arraylike): offset of the initial point as (y,x)
+
+        stride (2-element arraylike): vertical and horizontal strides
+
+    Returns:
+        patches (ndarray): output image patches as (N,shape[0],shape[1]) array
+
+        origin (2-tuple): array of top and array of left coordinates
+    """
+    px, py = np.meshgrid( np.arange(shape[1]),np.arange(shape[0]))
+    l, t = np.meshgrid(
+        np.arange(offset[1],img.shape[1]-shape[1]+1,stride[1]),
+        np.arange(offset[0],img.shape[0]-shape[0]+1,stride[0]) )
+    l = l.ravel()
+    t = t.ravel()
+    x = np.tile( px[None,:,:], (t.size,1,1)) + np.tile( l[:,None,None], (1,shape[0],shape[1]))
+    y = np.tile( py[None,:,:], (t.size,1,1)) + np.tile( t[:,None,None], (1,shape[0],shape[1]))
+    return img[y.ravel(),x.ravel()].reshape((t.size,shape[0],shape[1])), (t,l)
+
+
+
+def reconstruct_from_grayscale_patches( patches, origin, epsilon=1e-12 ):
+    """Rebuild an image from a set of patches by averaging
+
+    The reconstructed image will have different dimensions than the
+    original image if the strides and offsets of the patches were changed
+    from the defaults!
+
+    Args:
+        patches (ndarray): input patches as (N,patch_height,patch_width) array
+
+        origin (2-tuple): top and left coordinates of each patch
+
+        epsilon (scalar): regularization term for averaging when patches
+            some image pixels are not covered by any patch
+
+    Returns:
+        image (ndarray): output image reconstructed from patches of
+            size ( max(origin[0])+patches.shape[1], max(origin[1])+patches.shape[2])
+
+        weight (ndarray): output weight matrix consisting of the count
+            of patches covering each pixel
+    """
+    patch_width  = patches.shape[2]
+    patch_height = patches.shape[1]
+    img_width    = np.max( origin[1] ) + patch_width
+    img_height   = np.max( origin[0] ) + patch_height
+
+    out = np.zeros( (img_height,img_width) )
+    wgt = np.zeros( (img_height,img_width) )
+    for i in range(patch_height):
+        for j in range(patch_width):
+            out[origin[0]+i,origin[1]+j] += patches[:,i,j]
+            wgt[origin[0]+i,origin[1]+j] += 1.0
+
+    return out/np.maximum( wgt, epsilon ), wgt
+          
+                   
+          
+          
