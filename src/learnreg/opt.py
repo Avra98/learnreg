@@ -5,6 +5,17 @@ functions for optimization
 import cvxpy as cp
 import functools
 import torch
+import numpy as np
+
+def eval_lasso(A, x, y, beta, W):
+    """
+    compute J(x) = 1/2 || Ax - y ||_2^2 + beta ||W x||_1
+
+    """
+    A, x, y, W = (torch.as_tensor(X) for X in (A, x, y, W))
+
+    return 0.5 * ((A @ x - y)**2).sum() + beta * (W @ x).abs().sum()
+
 
 def solve_lasso(A, y, beta, W, method, **opts):
     """
@@ -68,9 +79,9 @@ def solve_lasso_cvxpy(A, y, beta, W):
     k = W.shape[0]
     num = y.shape[1]
     problem, params = setup_cvxpy_problem(*A.shape, k, num)
-    params['A'].value = A
-    params['y'].value = y
-    params['beta'].value = beta
+    params['A'].value = np.array(A)
+    params['y'].value = np.array(y)
+    params['beta'].value = np.array(beta)
     params['W'].value = W
 
     problem.solve()

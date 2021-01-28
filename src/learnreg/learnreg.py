@@ -7,13 +7,15 @@ import scipy
 import torch
 import collections
 import functools
+import random
 
 import learnreg.opt as opt
 
 # datatypes
 Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 
-solve_lasso = functools.partial(opt.solve_lasso, method='cvxpy')
+#solve_lasso = functools.partial(opt.solve_lasso, method='cvxpy')
+solve_lasso = functools.partial(opt.solve_lasso, method='ADMM', num_steps=100, rho=1000)
 
 # top-level driver code
 def main(signal_type,
@@ -28,6 +30,7 @@ def main(signal_type,
          SEED,
          learning_rate,
          num_steps,
+         batch_size,
          sign_threshold,
          _run=None):
 
@@ -38,7 +41,7 @@ def main(signal_type,
     W0 = W.copy()
 
     print_interval = 100
-    W = do_learning(A, 1.0, W, train, learning_rate, num_steps, print_interval, sign_threshold, logger=_run)
+    W = do_learning(A, 1.0, W, train, learning_rate, num_steps, batch_size, print_interval, sign_threshold, SEED, logger=_run)
 
     test = make_dataset(signal_type, A, noise_sigma, num_testing)
 
@@ -111,21 +114,6 @@ def make_opti(algo, W, opts):
 
 
 # problem setup
-def eval_lasso(A, x, y, beta, W):
-    """
-    compute J(x) for the lower-level  prblem
-    """
-    k = W.shape[0]
-    num = y.shape[1]
-    problem, params = opt.setup_cvxpy_problem(*A.shape, k, num)
-    params['A'].value = A
-    params['y'].value = y
-    params['beta'].value = beta
-    params['W'].value = W
-    params['x'].value = x
-    params['z'].value = (W @ x)
-
-    return problem.objective.expr.value
 
 
 def eval_upper(A, x_GT, y, beta, W):
@@ -230,18 +218,37 @@ def patch_dataset(num_signals,sigma):
     return Dataset(x=x, y=y1)
 
 
+def minibatcher(N, batch_size):
+    """
+    gives you the numbers 0, 1, 2, ..., N-1
+    in random groups of size batch_size
+    without replacement
+
+    usesage
+    shuffler = minibatcher(100, 3)
+
+    while something:
+        try:
+            batch_inds = next(shuffler)
+        except StopIteration:
+            shuffler = minibatcher(100, 3)
+    """
+    inds = list(range(N))
+    random.shuffle(inds)
+    for batch_ind in range(N // batch_size):
+        yield inds[batch_ind*batch_size:(batch_ind+1)*batch_size]
 
 
 def do_learning(A, beta, W0, train,
-                learning_rate, num_steps, print_interval=1,
-                sign_threshold=1e-6, logger=None):
+                learning_rate, num_steps, batch_size, print_interval=1,
+                sign_threshold=1e-6, random_seed=0, logger=None):
     """
-    k : sparse code length
-
     train : NamedTupe with fields x and y
 
     logger : sacred.Run object for storing online metrics
     """
+
+    random.seed(random_seed)
 
     x, y = train
     train_length = x.shape[1]
@@ -254,45 +261,56 @@ def do_learning(A, beta, W0, train,
     # main loop
     opti = torch.optim.SGD((W,), learning_rate)
 
-    print(f'{"step":12s}{"epoch":6s}{"index":6s}'
+    shuffler = minibatcher(train_length, batch_size)
+    epoch = 0
+
+    print(f'{"step":12s}{"epoch":6s}'
           f'{"cur loss":15s}{"epoch avg loss":15s}')
     for step in range(num_steps):
-        epoch = step // train_length
-        index = step % train_length
+        try:
+            batch_indices = next(shuffler)
+        except StopIteration:
+            shuffler = minibatcher(train_length, batch_size)
+            epoch += 1
 
         # compute grad and take a opti step
         opti.zero_grad()
-        y_cur = y[:, index:index+1]
-        x_cur = x[:, index:index+1]
+
         with torch.no_grad():
-            x_star = solve_lasso(A, y_cur, beta, W.numpy())
-            # threshold = find_optimal_thres(x_star, W, y_cur , beta)
-        W0, Wpm, s = find_signs(torch.tensor(x_star), W, threshold=sign_threshold)
-        x_closed = closed_form(W0, Wpm, s, torch.tensor(y_cur), beta)
+            x_star = solve_lasso(A, y[:, batch_indices], beta, W.numpy())
 
-        # check that x_closed is accurate
-        with torch.no_grad():
-            J_star = eval_lasso(A, x_star, y_cur, beta, W.numpy())
-            J_closed = eval_lasso(A, x_closed.numpy(), y_cur, beta, W.numpy())
-            gap = np.abs(J_closed - J_star)
+        for batch_index in range(batch_size):
+            data_index = batch_indices[batch_index]
+            y_cur = y[:, data_index:data_index+1]
+            x_cur = x[:, data_index:data_index+1]
+            x_star_cur = x_star[:, batch_index:batch_index+1]
 
-            if gap/J_star > 1e-2:
-                print(f'large gap: J_closed={J_closed:.3e}, '
-                      f'J_star={J_star:.3e}')
-                if logger is not None:
-                    logger.log_scalar('gap', gap, step)
+            W0, Wpm, s = find_signs(torch.as_tensor(x_star_cur), W, threshold=sign_threshold)
+            x_closed = closed_form(W0, Wpm, s, torch.tensor(y_cur), beta)
 
-        loss = MSE(x_closed, torch.tensor(x_cur))
-        last_loss = loss.item()
-        MSE_history[index] = last_loss
-        epoch_loss = np.nanmean(MSE_history)
-        loss.backward()
+            # check that x_closed is accurate
+            with torch.no_grad():
+                J_star = opt.eval_lasso(A, x_star_cur, y_cur, beta, W.numpy())
+                J_closed = opt.eval_lasso(A, x_closed.numpy(), y_cur, beta, W.numpy())
+                gap = np.abs(J_closed - J_star)
+
+                if gap/J_star > 1e-2:
+                    print(f'large gap: J_closed={J_closed:.3e}, '
+                          f'J_star={J_star:.3e}')
+                    if logger is not None:
+                        logger.log_scalar('gap', gap, step)
+
+            loss = MSE(x_closed, torch.tensor(x_cur)) / batch_size
+            last_loss = loss.item()
+            MSE_history[data_index] = last_loss
+            epoch_loss = np.nanmean(MSE_history)
+            loss.backward()
 
         opti.step()
 
         # print status line
         if step % print_interval == 0 or step == num_steps-1:
-            print(f'{step:<12d}{epoch:<6d}{index:<6d}'
+            print(f'{step:<12d}{epoch:<6d}'
                   f'{last_loss:<15.3e}{epoch_loss:<15.3e}')
 
             #if logger is not None:
@@ -349,9 +367,9 @@ def permute_for_display(W):
 def find_optimal_beta(A, x_GT, y, W, lower=0, upper=None):
     # heuristic to pick the upper limit
     if upper is None:
-        cost_zero = eval_lasso(A, np.zeros_like(x_GT), y, 0.0, W)
-        data_GT = eval_lasso(A, x_GT, y, 0.0, W)
-        reg_GT = eval_lasso(np.zeros_like(A), x_GT, np.zeros_like(y), 1.0, W)
+        cost_zero = opt.eval_lasso(A, np.zeros_like(x_GT), y, 0.0, W)
+        data_GT = opt.eval_lasso(A, x_GT, y, 0.0, W)
+        reg_GT = opt.eval_lasso(np.zeros_like(A), x_GT, np.zeros_like(y), 1.0, W)
 
         upper = (cost_zero - data_GT) / reg_GT
 
