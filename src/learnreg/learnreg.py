@@ -597,7 +597,7 @@ def vector2patch(p):
 
 
 
-###Image to patches and vice versa
+###Image to patches and vice versa     [Code source :http://jamesgregson.ca/extract-image-patches-in-python.html]
 def extract_grayscale_patches( img, shape, offset=(0,0), stride=(1,1) ):
     """Extracts (typically) overlapping regular patches from a grayscale image
 
