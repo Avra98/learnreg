@@ -7,11 +7,11 @@ import numpy as np
 
 import learnreg as lr
 
-ex = sacred.Experiment('hi', interactive=True)
+ex = sacred.Experiment()
 ex.observers.append(sacred.observers.MongoObserver())
 
 ex.config(lr.configs.basic)
 ex.config(lr.configs.baseline)
 
 ex.automain(lr.main)
-ex.run_commandline(['', 'print_config'])
+ex.run_commandline()
