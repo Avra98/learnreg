@@ -6,6 +6,7 @@ import cvxpy as cp
 import functools
 import torch
 import numpy as np
+import scipy.optimize
 
 def eval_lasso(A, x, y, beta, W):
     """
@@ -28,9 +29,23 @@ def solve_lasso(A, y, beta, W, method, **opts):
         return solve_lasso_ADMM(A, y, beta, W, **opts)
     elif method == 'cvxpy':
         return solve_lasso_cvxpy(A, y, beta, W)
+    elif method == 'dual':
+        return solve_lasso_dual(A, y, beta, W)
     else:
         raise ValueError(method)
 
+def solve_lasso_dual(A, y, beta, W):
+    """
+    exploratory at this point, assumes A = I
+    """
+
+    x = np.zeros((A.shape[1], y.shape[1]))
+
+    for i in range(y.shape[1]):
+        u = scipy.optimize.lsq_linear(W.T, y[:,i], (-beta, beta)).x
+        x[:,i] = y[:,i] - W.T @ u
+
+    return x
 
 def solve_lasso_ADMM(A, y, beta, W, num_steps, rho):
     """
@@ -49,6 +64,9 @@ def solve_lasso_ADMM(A, y, beta, W, num_steps, rho):
     t_incr = 2.0
     t_decr = 2.0
     mu_sq = 10.0**2
+
+    # over-relaxation (from https://web.stanford.edu/~boyd/papers/admm/total_variation/total_variation.html)
+    alpha = 1.8  #1.5  # typically 1.0 to 1.8
 
     # force everything to be tensors
     # no copying is done if already tensors
@@ -70,7 +88,7 @@ def solve_lasso_ADMM(A, y, beta, W, num_steps, rho):
 
     for step in range(num_steps):
         x = torch.lu_solve(ATy + rho * W.T @ (z - u), *Q_LU)
-        Wx = W @ x
+        Wx = alpha * W @ x + (1 - alpha) * z
         z_new = torch.nn.functional.softshrink(Wx + u, threshold)
         s = rho * W.T @ (z_new - z)  # dual residual
         z = z_new
