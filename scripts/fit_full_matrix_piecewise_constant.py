@@ -11,7 +11,6 @@ ex = sacred.Experiment()
 ex.observers.append(sacred.observers.MongoObserver())
 
 ex.config(lr.configs.basic)
-ex.config(lr.configs.baseline)
 
 ex.automain(lr.main)
 ex.run_commandline()
