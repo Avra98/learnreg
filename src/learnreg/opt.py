@@ -39,10 +39,16 @@ def solve_lasso_ADMM(A, y, beta, W, num_steps, rho):
     based on https://web.stanford.edu/~boyd/papers/pdf/admm_distr_stats.pdf
     6.4.1  Generalized Lasso
 
+    plus the penalty parameter updates from 3.4.1
+
     A, y, W - pytorch tensors
     beta, rho - scalars
 
     """
+    # parameters for rho updates
+    t_incr = 2.0
+    t_decr = 2.0
+    mu_sq = 10.0**2
 
     # force everything to be tensors
     # no copying is done if already tensors
@@ -56,15 +62,37 @@ def solve_lasso_ADMM(A, y, beta, W, num_steps, rho):
     Q_LU = torch.lu(Q)  # for useful for solving Qx = b, later
     # see https://pytorch.org/docs/stable/generated/torch.lu_solve.html
 
+    threshold = beta/rho
+
     ATy = A @ y
 
-    threshold = beta/rho
+
 
     for step in range(num_steps):
         x = torch.lu_solve(ATy + rho * W.T @ (z - u), *Q_LU)
         Wx = W @ x
-        z = torch.nn.functional.softshrink(Wx + u, threshold)
-        u = u + Wx - z
+        z_new = torch.nn.functional.softshrink(Wx + u, threshold)
+        s = rho * W.T @ (z_new - z)  # dual residual
+        z = z_new
+        r = Wx - z  # primal residual
+        u = u + r
+
+        s_norm_sq = (s**2).sum()
+        r_norm_sq = (r**2).sum()
+
+        if r_norm_sq > mu_sq * s_norm_sq:
+            rho = t_incr * rho
+            u = u / t_incr
+        elif s_norm_sq > mu_sq * r_norm_sq:
+            rho = rho / t_decr
+            u = u * t_decr
+        else:
+            continue
+
+        # this happens whenever we updated rho:
+        Q = (A.T @ A + rho * W.T @ W)
+        Q_LU = torch.lu(Q)  # for useful for solving Qx = b, later
+        threshold = beta/rho
 
     return x
 

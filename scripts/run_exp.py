@@ -9,7 +9,7 @@ import sacred
 import learnreg as lr
 
 ex = sacred.Experiment()
-#ex.observers.append(sacred.observers.MongoObserver())
+ex.observers.append(sacred.observers.MongoObserver())
 
 # extra named configs, used via "with <config name>" command line option
 ex.named_config(lr.configs.basic)

@@ -46,6 +46,7 @@ def main(signal_type,
     test = make_dataset(signal_type, A, noise_sigma, num_testing)
 
     beta = find_optimal_beta(A, test.x, test.y, W)
+
     MSE = eval_upper(A, test.x, test.y, beta, W)
 
     if _run is not None:
@@ -374,7 +375,6 @@ def find_optimal_beta(A, x_GT, y, W, lower=0, upper=None):
         upper = (cost_zero - data_GT) / reg_GT
 
         upper = max(upper, lower)
-
 
     def J(beta):
         x_star = solve_lasso(A, y, beta, W)

@@ -14,7 +14,7 @@ W = lr.make_transform('random', n, k, scale=1.0e-2)
 
 opts_dict = {
     'ADMM': {
-        'num_steps': 1000, 'rho': 1e3},
+        'num_steps': 1000, 'rho': 1e0},
     'cvxpy': {}
 }
 
