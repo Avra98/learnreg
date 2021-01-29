@@ -15,7 +15,7 @@ import learnreg.opt as opt
 Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 
 #solve_lasso = functools.partial(opt.solve_lasso, method='cvxpy')
-solve_lasso = functools.partial(opt.solve_lasso, method='ADMM', num_steps=100, rho=1000)
+solve_lasso = functools.partial(opt.solve_lasso, method='ADMM', num_steps=1000, rho=1)
 
 # top-level driver code
 def main(signal_type,
