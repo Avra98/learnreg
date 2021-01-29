@@ -302,7 +302,7 @@ def do_learning(A, beta, W0, train,
                         logger.log_scalar('gap', gap, step)
 
             loss = MSE(x_closed, torch.tensor(x_cur)) / batch_size
-            last_loss = loss.item()
+            last_loss = loss.item() * batch_size
             MSE_history[data_index] = last_loss
             epoch_loss = np.nanmean(MSE_history)
             loss.backward()
