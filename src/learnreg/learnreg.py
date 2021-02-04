@@ -14,8 +14,9 @@ import learnreg.opt as opt
 # datatypes
 Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 
-#solve_lasso = functools.partial(opt.solve_lasso, method='cvxpy')
-solve_lasso = functools.partial(opt.solve_lasso, method='ADMM', num_steps=1000, rho=1)
+solve_lasso = functools.partial(opt.solve_lasso, method='cvxpy')
+#solve_lasso = functools.partial(opt.solve_lasso, method='ADMM', num_steps=1000, rho=1)
+#solve_lasso = functools.partial(opt.solve_lasso, method='dual_PGD', num_steps=100)
 
 # top-level driver code
 def main(signal_type,
@@ -148,18 +149,28 @@ def make_signal(sig_type, n, **kwargs):
         sigs = make_piecewise_const_signal(n, **kwargs)
     elif sig_type == 'DCT-sparse':
         sigs = make_DCT_signal(n, **kwargs)
+    elif sig_type == 'image_patch':
+        sigs = XXXXXX
     else:
         raise ValueError(sig_type)
 
     return sigs
 
-def make_piecewise_const_signal(n, jump_freq=0.1, num_signals=1):
+def make_piecewise_const_signal(n, num_jumps=None, num_signals=1):
     """
     piecewise constant signals in the range [0, 1)
     each piece height is chosen uniformly at random
+
+    num_jumps - expected number of jumps
     """
+    if num_jumps is None:
+        jump_freq = 0.1
+    else:
+        jump_freq = num_jumps / n
+
+
     jumps = np.random.rand(n, num_signals) <= jump_freq
-    inds = np.cumsum(jumps, axis=0)
+    inds = np.cumsum(jumps, axis=0)-1
     heights = np.random.rand(n, num_signals)
 
     sigs = heights[inds, range(num_signals)]
@@ -374,7 +385,7 @@ def find_optimal_beta(A, x_GT, y, W, lower=0, upper=None):
 
         upper = (cost_zero - data_GT) / reg_GT
 
-        upper = max(upper, lower)
+        upper = float(max(upper, lower))
 
     def J(beta):
         x_star = solve_lasso(A, y, beta, W)
@@ -470,6 +481,8 @@ def find_signs(x, W, threshold=1e-6):
     given x* and W, find the necessary sign matrices:
     W_0, W_pm, and s
     """
+    W = torch.as_tensor(W)
+
     Wx = W @ x
     is_zero = (Wx.abs() < threshold).squeeze()
     W0 = W[is_zero, :]
@@ -485,6 +498,9 @@ def closed_form(W0, Wpm, s, y, beta):
 
     """
     rcond = 1e-15  # cutoff for small singular values
+
+    W0 = torch.as_tensor(W0)
+    y = torch.as_tensor(y)
 
     y_term = y - beta * Wpm.T @ s
 

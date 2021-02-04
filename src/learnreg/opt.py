@@ -7,15 +7,15 @@ import functools
 import torch
 import numpy as np
 import scipy.optimize
+import scipy.linalg
 
 def eval_lasso(A, x, y, beta, W):
     """
     compute J(x) = 1/2 || Ax - y ||_2^2 + beta ||W x||_1
 
     """
-    A, x, y, W = (torch.as_tensor(X) for X in (A, x, y, W))
 
-    return 0.5 * ((A @ x - y)**2).sum() + beta * (W @ x).abs().sum()
+    return 0.5 * np.sum((A @ x - y)**2) + beta * np.sum(np.abs(W @ x))
 
 
 def solve_lasso(A, y, beta, W, method, **opts):
@@ -26,15 +26,19 @@ def solve_lasso(A, y, beta, W, method, **opts):
     """
 
     if method == 'ADMM':
-        return solve_lasso_ADMM(A, y, beta, W, **opts)
+        x = solve_lasso_ADMM(A, y, beta, W, **opts)
     elif method == 'cvxpy':
-        return solve_lasso_cvxpy(A, y, beta, W)
-    elif method == 'dual':
-        return solve_lasso_dual(A, y, beta, W)
+        x = solve_lasso_cvxpy(A, y, beta, W)
+    elif method == 'dual_scipy':
+        x = solve_lasso_dual_scipy(A, y, beta, W)
+    elif method == 'dual_PGD':
+        x = solve_lasso_dual_PGD(A, y, beta, W, **opts)
     else:
         raise ValueError(method)
 
-def solve_lasso_dual(A, y, beta, W):
+    return x
+
+def solve_lasso_dual_scipy(A, y, beta, W):
     """
     exploratory at this point, assumes A = I
     """
@@ -47,6 +51,49 @@ def solve_lasso_dual(A, y, beta, W):
 
     return x
 
+def solve_lasso_dual_PGD(A, y, beta, W, num_steps=100, step_size=None):
+    """
+    exploratory at this point, assumes A = I
+
+    || y - WT u || st -beta <= ui <= beta
+    """
+
+    Wy = W @ y
+
+    u = Wy
+
+    WWT = W @ W.T
+
+    if step_size is None:
+        step_size = 1 / np.linalg.norm(WWT, 2)
+
+        # optimal step size given by 1/L (see globalbioim)
+
+    for step in range(num_steps):
+        u = u - step_size * (WWT @ u - Wy)
+        u[u > beta] = beta
+        u[u < -beta] = -beta
+
+
+
+    info = {
+        'step_size': step_size,
+        'u': u}
+
+    x = np.zeros_like(y)
+    for i in range(y.shape[1]):
+        s = np.sign(u[np.abs(u[:, i]) == beta, i])
+        Wpm = W[np.abs(u[:, i]) == beta, :]
+        W0 = W[np.abs(u[:, i]) != beta, :]
+        yterm = y[:, i] - beta * Wpm.T @ s
+        x[:, i] = yterm - (np.linalg.pinv(W0) @ W0) @ yterm
+
+
+    return x #y - W.T @ u
+
+
+
+
 def solve_lasso_ADMM(A, y, beta, W, num_steps, rho):
     """
     argmin_x 1/2 || Ax - y ||_2^2 + beta ||W x||_1
@@ -56,7 +103,7 @@ def solve_lasso_ADMM(A, y, beta, W, num_steps, rho):
 
     plus the penalty parameter updates from 3.4.1
 
-    A, y, W - pytorch tensors
+    A, y, W - np arrays
     beta, rho - scalars
 
     """
@@ -68,16 +115,12 @@ def solve_lasso_ADMM(A, y, beta, W, num_steps, rho):
     # over-relaxation (from https://web.stanford.edu/~boyd/papers/admm/total_variation/total_variation.html)
     alpha = 1.8  #1.5  # typically 1.0 to 1.8
 
-    # force everything to be tensors
-    # no copying is done if already tensors
-    A, y, W = (torch.as_tensor(X) for X in (A, y, W))
-
-    z = torch.zeros((W.shape[0], y.shape[1]), dtype=y.dtype)
-    u = torch.zeros_like(z)
+    z = np.zeros((W.shape[0], y.shape[1]), dtype=y.dtype)
+    u = np.zeros_like(z)
 
     # precomputations
     Q = (A.T @ A + rho * W.T @ W)
-    Q_LU = torch.lu(Q)  # for useful for solving Qx = b, later
+    Q_LU = scipy.linalg.lu_factor(Q)  # for useful for solving Qx = b, later
     # see https://pytorch.org/docs/stable/generated/torch.lu_solve.html
 
     threshold = beta/rho
@@ -87,16 +130,18 @@ def solve_lasso_ADMM(A, y, beta, W, num_steps, rho):
 
 
     for step in range(num_steps):
-        x = torch.lu_solve(ATy + rho * W.T @ (z - u), *Q_LU)
+        x = scipy.linalg.lu_solve(Q_LU, ATy + rho * W.T @ (z - u))
         Wx = alpha * W @ x + (1 - alpha) * z
-        z_new = torch.nn.functional.softshrink(Wx + u, threshold)
+        z_new = Wx + u
+        z_new = np.sign(z_new) * np.maximum(np.abs(z_new)-threshold, 0)  # this is soft threshold
+
         s = rho * W.T @ (z_new - z)  # dual residual
         z = z_new
         r = Wx - z  # primal residual
         u = u + r
 
-        s_norm_sq = (s**2).sum()
-        r_norm_sq = (r**2).sum()
+        s_norm_sq = np.sum(s**2)
+        r_norm_sq = np.sum(r**2)
 
         if r_norm_sq > mu_sq * s_norm_sq:
             rho = t_incr * rho
@@ -109,7 +154,7 @@ def solve_lasso_ADMM(A, y, beta, W, num_steps, rho):
 
         # this happens whenever we updated rho:
         Q = (A.T @ A + rho * W.T @ W)
-        Q_LU = torch.lu(Q)  # for useful for solving Qx = b, later
+        Q_LU = scipy.linalg.lu_factor(Q)  # for useful for solving Qx = b, later
         threshold = beta/rho
 
     return x
@@ -121,6 +166,7 @@ def solve_lasso_cvxpy(A, y, beta, W):
 
     using cvxpy
     """
+    y = y.reshape(y.shape[0], -1)  # add trailing dim if needed
 
     k = W.shape[0]
     num = y.shape[1]
@@ -135,7 +181,7 @@ def solve_lasso_cvxpy(A, y, beta, W):
     return params['x'].value
 
 
-@functools.lru_cache()  # caching because making the problem object is slow
+#@functools.lru_cache()  # caching because making the problem object is slow
 def setup_cvxpy_problem(m, n, k, batch_size=1):
     """
     sets up a cvxpy Problem representing
@@ -151,6 +197,7 @@ def setup_cvxpy_problem(m, n, k, batch_size=1):
     W: k x n
 
     """
+
     A = cp.Parameter((m,n), name='A')
     x = cp.Variable((n, batch_size), name='x')
     y = cp.Parameter((m, batch_size), name='y')
