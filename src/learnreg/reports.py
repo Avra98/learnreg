@@ -71,6 +71,8 @@ def plot_denoising(data, beta, W, max_signals=3, **kwargs):
     x_star = lr.solve_lasso(A, data.y[:, :max_signals], beta, W)
     x_gt = data.x
     fig, axes = plt.subplots(x_star.shape[1], 1)
+    if data.y.shape[1] == 1: # make axes a list always
+        axes = [axes]
     for i, ax in enumerate(axes):
         plot_recon(
             x_gt[:, i],
@@ -115,6 +117,26 @@ def show_W(W_0, W):
     ax[1].set_title('W*')
     fig.tight_layout()
     return fig, ax
+
+def show_W_patch(W):
+    k, n = W.shape
+    p = int(np.sqrt(n))
+    m = int(np.ceil(np.sqrt(k)))
+    fig, axes = plt.subplots(m, m, constrained_layout=True)
+
+    vmin = W.min()
+    vmax = W.max()
+    for i in range(k):
+        ax = axes.flatten()[i]
+        ax.imshow(
+            W[i, :].T.reshape(p, p),
+            vmin=vmin, vmax=vmax, cmap='BrBG')
+
+    for ax in axes.flatten():
+        ax.axis('off')
+    fig.tight_layout()
+    return fig, axes
+
 
 
 def rearrange_to_baseline(W, B):

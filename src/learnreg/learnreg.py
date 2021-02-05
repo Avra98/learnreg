@@ -8,6 +8,7 @@ import torch
 import collections
 import functools
 import random
+import math
 
 import learnreg.opt as opt
 
@@ -125,38 +126,42 @@ def eval_upper(A, x_GT, y, beta, W):
     x = solve_lasso(A, y, beta, W)
     return MSE(x, x_GT)
 
-class SolveLassoFunction(torch.autograd.Function):
 
-    @staticmethod
-    def forward(ctx, A, y, beta, W):
-        x_star = solve_lasso(A, y, beta, np.array(W))
-        #ctx.save_for_backward(A, y, beta, W, x_star)
-        return torch.tensor(x_star)
+def make_signal(sig_type, n, num_signals, signal_opts=None):
+    if signal_opts is None:
+        signal_opts = {}
 
-    @staticmethod
-    def backward(ctx, grad_output):
-        #A, y, beta, W, x_star = ctx.saved_tensors
-        #W0, Wpm, s = find_signs(x_star, W)
-        #proj = torch.eye(W0.shape[1]) - torch.pinverse(W0) @ W0
-        # todo: to be continued...
-        return grad_output
-
-
-
-
-def make_signal(sig_type, n, **kwargs):
     if sig_type == 'piecewise_constant':
-        sigs = make_piecewise_const_signal(n, **kwargs)
+        sigs = make_piecewise_const_signal(n, num_signals, **signal_opts)
     elif sig_type == 'DCT-sparse':
-        sigs = make_DCT_signal(n, **kwargs)
+        sigs = make_DCT_signal(n, num_signals, **signal_opts)
     elif sig_type == 'image_patch':
         sigs = XXXXXX
+    elif sig_type == 'constant_patch':
+        sigs = make_constant_patch_signal(n, num_signals, **signal_opts)
     else:
         raise ValueError(sig_type)
 
     return sigs
 
-def make_piecewise_const_signal(n, num_jumps=None, num_signals=1):
+def make_constant_patch_signal(n, num_signals, num_jumps):
+    """
+    separable sum of piecewise constant signals
+    reshaped into vectors
+    """
+    m = math.isqrt(n)
+    assert m**2 == n
+
+    sigs_a = make_piecewise_const_signal(m, num_jumps, num_signals=num_signals)
+    sigs_b = make_piecewise_const_signal(m, num_jumps, num_signals=num_signals)
+
+    sigs = sigs_a[:, np.newaxis, :] + sigs_b[np.newaxis, :, :]
+
+    return sigs.reshape(n, num_signals)/2  # so the max is 1
+
+
+
+def make_piecewise_const_signal(n, num_signals=1, num_jumps=None):
     """
     piecewise constant signals in the range [0, 1)
     each piece height is chosen uniformly at random
@@ -197,9 +202,10 @@ def make_measurement(x, A, sigma):
     return y
 
 
-def make_dataset(signal_type, A, noise_sigma, num_signals):
+def make_dataset(signal_type, A, noise_sigma, num_signals, signal_opts=None):
 
-    x = make_signal(signal_type, A.shape[1], num_signals=num_signals)
+    x = make_signal(signal_type, A.shape[1], num_signals=num_signals,
+                    signal_opts=signal_opts)
     y = make_measurement(x, A, noise_sigma)
     return Dataset(x=x, y=y)
 
