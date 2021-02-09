@@ -166,3 +166,40 @@ def rearrange_to_baseline(W, B):
 
 
     return Wout
+
+
+def compare_matrices(xs, titles):
+    x1, x2 = xs
+
+    fig, axes = plt.subplots(1, 2, sharey=True, sharex=True)
+    ax = axes[0] # useful later for sharing axes
+    args = dict(vmin=-np.max(np.abs((x1, x2))),
+                vmax=np.max(np.abs((x1, x2))),
+                cmap='BrBG',
+                )
+    ax = axes[0]
+    axes[0].imshow(x1.copy(), **args)
+    axes[0].set_title(titles[0])
+    im = axes[1].imshow(x2.copy(), **args)
+    axes[1].set_title(titles[1])
+    fig.tight_layout()
+    fig.colorbar(im, ax=axes, location='bottom')
+    fig1 = fig
+
+    fig, axes = plt.subplots(1, 2, sharex=True, sharey=True)
+    im0 = axes[0].imshow(np.abs(x1 - x2))
+    axes[0].set_title('absolute error')
+
+    # join to previous graphs
+    axes[0].get_shared_x_axes().join(axes[0], ax)
+    axes[0].get_shared_y_axes().join(axes[0], ax)
+
+    im1 = axes[1].imshow(np.abs(x1 - x2) / np.abs(x1))
+    axes[1].set_title('relative error')
+    fig.suptitle(f'{titles[0]} vs. {titles[1]}')
+    fig.tight_layout()
+    fig.colorbar(im0, ax=[axes[0]], location='bottom')
+    fig.colorbar(im1, ax=[axes[1]], location='bottom')
+
+
+    return fig1, fig
