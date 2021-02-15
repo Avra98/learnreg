@@ -1,5 +1,5 @@
 """
-functions for optimization
+functions for optimization and cost functions
 """
 
 import cvxpy as cp
@@ -9,16 +9,26 @@ import numpy as np
 import scipy.optimize
 import scipy.linalg
 
+def MSE(x, x_gt):
+    return ((x - x_gt)**2).mean()
+
+def eval_upper(A, x_GT, y, beta, W):
+    """
+    return the upper cost value at point W
+    """
+    x = solve_lasso(A, y, beta, W)
+    return MSE(x, x_GT)
+
+
 def eval_lasso(A, x, y, beta, W):
     """
     compute J(x) = 1/2 || Ax - y ||_2^2 + beta ||W x||_1
-
     """
 
     return 0.5 * np.sum((A @ x - y)**2) + beta * np.sum(np.abs(W @ x))
 
 
-def solve_lasso(A, y, beta, W, method, **opts):
+def solve_lasso(A, y, beta, W, method='cvxpy', **opts):
     """
     argmin_x 1/2 || Ax - y ||_2^2 + beta ||W x||_1
 
@@ -38,6 +48,8 @@ def solve_lasso(A, y, beta, W, method, **opts):
 
     return x
 
+## solvers -------------------------------------------------------
+
 def solve_lasso_dual_scipy(A, y, beta, W):
     """
     exploratory at this point, assumes A = I
@@ -55,7 +67,7 @@ def solve_lasso_dual_PGD(A, y, beta, W, num_steps=100, step_size=None):
     """
     exploratory at this point, assumes A = I
 
-    || y - WT u || st -beta <= ui <= beta
+    argmin_u || y - WT u || st -beta <= ui <= beta
     """
 
     Wy = W @ y
@@ -179,6 +191,33 @@ def solve_lasso_cvxpy(A, y, beta, W):
     problem.solve()
 
     return params['x'].value
+
+
+def make_cvxpy_problem(A, y_array, W_array, k):
+    """
+    argmin_x 1/2||Ax - y||_2^2 + ||Wx||_1
+
+    putting beta loses the DPP structure,
+    so handle it by scaling W
+
+    y_array and W_array are "pass by refernce,"
+    so keep hold of them and change as needed
+    """
+
+    m, n = A.shape
+    A = cp.Constant(A)
+    x = cp.Variable((n, 1))
+    y = cp.Parameter((m, 1))
+    W = cp.Parameter((k, n))
+
+    obj = 0.5 * cp.sum_squares(A @ x - y) + cp.norm1(W @ x)
+
+    prob = cp.Problem(cp.Minimize(obj))
+
+    prob.parameters()[0].value = y_array
+    prob.parameters()[1].value = W_array
+
+    return prob
 
 
 #@functools.lru_cache()  # caching because making the problem object is slow

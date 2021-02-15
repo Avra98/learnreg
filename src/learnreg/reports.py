@@ -120,8 +120,8 @@ def show_W(W_0, W):
 
 def show_W_patch(W):
     k, n = W.shape
-    p = int(np.sqrt(n))
-    m = int(np.ceil(np.sqrt(k)))
+    p = int(np.sqrt(n))  # patch side length
+    m = int(np.ceil(np.sqrt(k)))  # determine number of subplots
     fig, axes = plt.subplots(m, m, constrained_layout=True)
 
     vmin = W.min()

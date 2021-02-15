@@ -34,31 +34,6 @@ W = lr.make_transform(transform_type, n, k, transform_scale)
 x, y = lr.make_dataset(signal_type, A, noise_sigma, num_signals)
 
 
-def make_problem(A, y_array, W_array, k):
-    """
-    argmin_x 1/2||Ax - y||_2^2 + ||Wx||_1
-
-    putting beta loses the DPP structure,
-    so handle it by scaling W
-
-    y_array and W_array are "pass by refernce,"
-    so keep hold of them and change as needed
-    """
-
-    m, n = A.shape
-    A = cp.Constant(A)
-    x = cp.Variable((n, 1))
-    y = cp.Parameter((m, 1))
-    W = cp.Parameter((k, n))
-
-    obj = 0.5 * cp.sum_squares(A @ x - y) + cp.norm1(W @ x)
-
-    prob = cp.Problem(cp.Minimize(obj))
-
-    prob.parameters()[0].value = y_array
-    prob.parameters()[1].value = W_array
-
-    return prob
 
 def solve(prob):
     prob.solve()

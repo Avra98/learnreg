@@ -15,10 +15,6 @@ import learnreg.opt as opt
 # datatypes
 Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 
-solve_lasso = functools.partial(opt.solve_lasso, method='cvxpy')
-#solve_lasso = functools.partial(opt.solve_lasso, method='ADMM', num_steps=1000, rho=1)
-#solve_lasso = functools.partial(opt.solve_lasso, method='dual_PGD', num_steps=100)
-
 # top-level driver code
 def main(signal_type,
          n,
@@ -29,33 +25,34 @@ def main(signal_type,
          transform_type,
          transform_scale,
          num_testing,
-         SEED,
          learning_rate,
          num_steps,
          batch_size,
          sign_threshold,
+         seed,
          _run=None):
+    """
 
-    np.random.seed(SEED)
+
+    """
+
+
     A = make_foward_model(forward_model_type, n)
     train = make_dataset(signal_type, A, noise_sigma, num_training)
+    test = make_dataset(signal_type, A, noise_sigma, num_testing)
     W = make_transform(transform_type, n, k, transform_scale)
     W0 = W.copy()
 
-    print_interval = 100
-    W = do_learning(A, 1.0, W, train, learning_rate, num_steps, batch_size, print_interval, sign_threshold, SEED, logger=_run)
-
-    test = make_dataset(signal_type, A, noise_sigma, num_testing)
+    W = do_learning(
+        A, 1.0, W, train,
+        learning_rate, num_steps, batch_size, print_interval=100, sign_threshold)
 
     beta = find_optimal_beta(A, test.x, test.y, W)
-
     MSE = eval_upper(A, test.x, test.y, beta, W)
 
     if _run is not None:
-        _run.info['A'] = A
-        _run.info['MSE'] = float(MSE)
-        _run.info['beta'] = float(beta)
-        _run.info['W0'] = W0
+        _run.info['MSE'] = MSE
+        _run.info['beta'] = beta
         _run.info['W'] = W
     else:
         return MSE, beta, W
@@ -104,27 +101,7 @@ def main_image(filename,patch_size,
         return denoised_image,W
 
 
-
-
-def make_opti(algo, W, opts):
-    if algo == 'LBFGS':
-        opti = torch.optim.LBFGS((W,), **opts)
-    elif algo == 'SGD':
-        opti = torch.optim.SGD((W,), **opts)
-    else:
-        raise ValueError(algo)
-    return opti
-
-
 # problem setup
-
-
-def eval_upper(A, x_GT, y, beta, W):
-    """
-    return the upper cost value at point W
-    """
-    x = solve_lasso(A, y, beta, W)
-    return MSE(x, x_GT)
 
 
 def make_signal(sig_type, n, num_signals, signal_opts=None):
@@ -259,7 +236,7 @@ def minibatcher(N, batch_size):
 
 def do_learning(A, beta, W0, train,
                 learning_rate, num_steps, batch_size, print_interval=1,
-                sign_threshold=1e-6, random_seed=0, logger=None):
+                sign_threshold=1e-6):
     """
     train : NamedTupe with fields x and y
 
