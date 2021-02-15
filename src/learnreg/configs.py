@@ -17,7 +17,7 @@ def basic():
     transform_scale = 1e-2
 
     num_testing = 50
-    SEED = 0
+    seed = 0
 
 
 def baseline(n, signal_type):

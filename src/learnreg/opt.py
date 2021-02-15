@@ -220,7 +220,7 @@ def make_cvxpy_problem(A, y_array, W_array, k):
     return prob
 
 
-#@functools.lru_cache()  # caching because making the problem object is slow
+@functools.lru_cache()  # caching because making the problem object is slow
 def setup_cvxpy_problem(m, n, k, batch_size=1):
     """
     sets up a cvxpy Problem representing

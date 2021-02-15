@@ -9,6 +9,9 @@ import collections
 import functools
 import random
 import math
+import shortuuid
+import time
+import pathlib
 
 import learnreg.opt as opt
 
@@ -45,10 +48,10 @@ def main(signal_type,
 
     W = do_learning(
         A, 1.0, W, train,
-        learning_rate, num_steps, batch_size, print_interval=100, sign_threshold)
+        learning_rate, num_steps, batch_size, print_interval=100, sign_threshold=sign_threshold)
 
     beta = find_optimal_beta(A, test.x, test.y, W)
-    MSE = eval_upper(A, test.x, test.y, beta, W)
+    MSE = opt.eval_upper(A, test.x, test.y, beta, W)
 
     if _run is not None:
         _run.info['MSE'] = MSE
@@ -236,14 +239,20 @@ def minibatcher(N, batch_size):
 
 def do_learning(A, beta, W0, train,
                 learning_rate, num_steps, batch_size, print_interval=1,
-                sign_threshold=1e-6):
+                sign_threshold=1e-6,
+                checkpoint_dir='checkpoints',
+                checkpoint_frequency=None):
     """
     train : NamedTupe with fields x and y
 
-    logger : sacred.Run object for storing online metrics
+    checkpoint_frequency: save results every X seconds
     """
 
-    random.seed(random_seed)
+    if checkpoint_frequency is not None:
+        outpath = pathlib.Path(checkpoint_dir, 'W_' +  shortuuid.uuid())
+        print(f'Saving to {outpath}')
+        time_last_save = time.time()
+
 
     x, y = train
     train_length = x.shape[1]
@@ -272,7 +281,7 @@ def do_learning(A, beta, W0, train,
         opti.zero_grad()
 
         with torch.no_grad():
-            x_star = solve_lasso(A, y[:, batch_indices], beta, W.numpy())
+            x_star = opt.solve_lasso(A, y[:, batch_indices], beta, W.numpy())
 
         for batch_index in range(batch_size):
             data_index = batch_indices[batch_index]
@@ -310,6 +319,16 @@ def do_learning(A, beta, W0, train,
 
             #if logger is not None:
             #    logger.log_scalar('train.loss', last_loss, step)
+
+        # save current W
+        if (
+                checkpoint_frequency is not None and
+                time.time() - time_last_save > checkpoint_frequency
+        ):
+            np.save(outpath, np.array(W.detach()))
+            time_last_save = time.time()
+
+
 
     return np.array(W.detach())
 
@@ -371,7 +390,7 @@ def find_optimal_beta(A, x_GT, y, W, lower=0, upper=None):
         upper = float(max(upper, lower))
 
     def J(beta):
-        x_star = solve_lasso(A, y, beta, W)
+        x_star = opt.solve_lasso(A, y, beta, W)
         return MSE(x_star, x_GT)
 
     a, b = min_golden(J, lower, upper)

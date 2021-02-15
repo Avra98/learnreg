@@ -11,6 +11,7 @@ dependencies:
       - -e src
       - cvxpylayers==0.1.4
       - sacred==0.8.2
+      - shortuuid
 
 
 
