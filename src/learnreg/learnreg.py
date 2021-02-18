@@ -237,13 +237,13 @@ def minibatcher(N, batch_size):
         yield inds[batch_ind*batch_size:(batch_ind+1)*batch_size]
 
 
-def do_learning(A, beta, W0, train,
+def do_learning(A, beta, W0, train, eval_upper_fcn,
                 learning_rate, num_steps, batch_size, print_interval=1,
-                sign_threshold=1e-6,
                 checkpoint_dir='checkpoints',
                 checkpoint_frequency=None):
     """
     train : NamedTupe with fields x and y
+    eval_upper_fcn : computes value and gradient of upper-level optimization problem
 
     checkpoint_frequency: save results every X seconds
     """
@@ -257,19 +257,17 @@ def do_learning(A, beta, W0, train,
     x, y = train
     train_length = x.shape[1]
 
-    W = torch.tensor(W0)
-    W.requires_grad_(True)
+    W = W0.copy()
 
+    # setup main loop
     MSE_history = torch.full((train_length,), np.nan)
-
-    # main loop
-    opti = torch.optim.SGD((W,), learning_rate)
-
     shuffler = minibatcher(train_length, batch_size)
     epoch = 0
 
     print(f'{"step":12s}{"epoch":6s}'
           f'{"cur loss":15s}{"epoch avg loss":15s}')
+
+    # main loop
     for step in range(num_steps):
         try:
             batch_indices = next(shuffler)
@@ -277,43 +275,23 @@ def do_learning(A, beta, W0, train,
             shuffler = minibatcher(train_length, batch_size)
             epoch += 1
 
-        # compute grad and take a opti step
-        opti.zero_grad()
+        # compute batch gradient
+        grad = np.zeros_like(W)
+        for idx in batch_indices:
+            x_cur = x[:, idx]
+            y_cur = y[:, idx]
 
-        with torch.no_grad():
-            x_star = opt.solve_lasso(A, y[:, batch_indices], beta, W.numpy())
+            loss_cur, grad_cur = eval_upper_fcn(A, x_cur, y_cur, beta, W,
+                                            requires_grad=True)
+            MSE_history[idx] = loss_cur
+            grad += grad_cur / batch_size
 
-        for batch_index in range(batch_size):
-            data_index = batch_indices[batch_index]
-            y_cur = y[:, data_index:data_index+1]
-            x_cur = x[:, data_index:data_index+1]
-            x_star_cur = x_star[:, batch_index:batch_index+1]
-
-            W0, Wpm, s = find_signs(torch.as_tensor(x_star_cur), W, threshold=sign_threshold)
-            x_closed = closed_form(W0, Wpm, s, torch.tensor(y_cur), beta)
-
-            # check that x_closed is accurate
-            with torch.no_grad():
-                J_star = opt.eval_lasso(A, x_star_cur, y_cur, beta, W.numpy())
-                J_closed = opt.eval_lasso(A, x_closed.numpy(), y_cur, beta, W.numpy())
-                gap = np.abs(J_closed - J_star)
-
-                if gap/J_star > 1e-2:
-                    print(f'large gap: J_closed={J_closed:.3e}, '
-                          f'J_star={J_star:.3e}')
-                    if logger is not None:
-                        logger.log_scalar('gap', gap, step)
-
-            loss = MSE(x_closed, torch.tensor(x_cur)) / batch_size
-            last_loss = loss.item() * batch_size
-            MSE_history[data_index] = last_loss
-            epoch_loss = np.nanmean(MSE_history)
-            loss.backward()
-
-        opti.step()
+        # gradient step
+        W -= learning_rate * grad
 
         # print status line
         if step % print_interval == 0 or step == num_steps-1:
+            epoch_loss = np.nanmean(MSE_history)
             print(f'{step:<12d}{epoch:<6d}'
                   f'{last_loss:<15.3e}{epoch_loss:<15.3e}')
 
@@ -328,9 +306,7 @@ def do_learning(A, beta, W0, train,
             np.save(outpath, np.array(W.detach()))
             time_last_save = time.time()
 
-
-
-    return np.array(W.detach())
+    return np.array(W)
 
 
 # utilities

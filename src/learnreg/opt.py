@@ -12,15 +12,8 @@ import scipy.linalg
 def MSE(x, x_gt):
     return ((x - x_gt)**2).mean()
 
-def eval_upper(A, x_GT, y, beta, W):
-    """
-    return the upper cost value at point W
-    """
-    x = solve_lasso(A, y, beta, W)
-    return MSE(x, x_GT)
 
-
-def eval_lasso(A, x, y, beta, W):
+def eval_lasso(x, y, beta, W):
     """
     compute J(x) = 1/2 || Ax - y ||_2^2 + beta ||W x||_1
     """
@@ -31,7 +24,6 @@ def eval_lasso(A, x, y, beta, W):
 def solve_lasso(A, y, beta, W, method='cvxpy', **opts):
     """
     argmin_x 1/2 || Ax - y ||_2^2 + beta ||W x||_1
-
     using different possible solvers
     """
 
@@ -48,7 +40,128 @@ def solve_lasso(A, y, beta, W, method='cvxpy', **opts):
 
     return x
 
-## solvers -------------------------------------------------------
+
+class CvxpySolver():
+    """
+    use this for time-critical repeated solves
+    assumes A is not changing
+    """
+
+    def __init__(self, A, k, threshold):
+        self.threshold = threshold
+        self.prob = make_cvxpy_problem(A, k)
+
+
+    def eval_upper(self, A, y, beta, W, x_GT, requires_grad=False):
+        x_hat = solve_cvxpy_problem(self.prob, y, beta, W)
+        MSE = MSE(x_hat, x_GT)
+
+        if not requires_grad:
+            return MSE
+
+        grad = compute_grad(x_hat, y, W, x_GT, self.threshold)
+
+        return MSE, grad
+
+def solve_cvxpy_problem(prob, y, beta, W):
+    prob.y.value = y
+    prob.W.value = beta * W
+
+    prob.solve()
+    return prob.x.value
+
+
+def null_proj(X):
+    """
+    N = I - X^+ X
+      = I - V E+ U* U E V*
+      = I - V E+E V*
+
+    where E+
+    """
+    rcond = 1e-15
+
+    if X.shape[0] == 0:
+        return np.eye(X.shape[1])
+
+    U, S, Vh = np.linalg.svd(X)
+    S = np.where(S >= rcond, 1.0, 0.0)
+
+    Vh = Vh[:len(S), :]
+
+    XpX = Vh.T @ np.diag(S) @ Vh  #
+
+    return np.eye(X.shape[1]) - XpX
+
+
+def compute_grad(x_hat, y, W, x, threshold):
+    is_zero = np.abs(W@x_hat)[:, 0] < threshold
+
+    W0 = W[is_zero, :]
+    s = np.sign(W@x_hat)[~is_zero]
+    Wpm = W[~is_zero, :]
+
+    gradJ = x_hat - x
+    grad = np.zeros_like(W)
+
+    # grad for the Wpm part
+    N = null_proj(W0)
+    grad[~is_zero, :] = - s @ gradJ.T @ N
+
+    # grad for the W0 part
+    W0p = np.linalg.pinv(W0)
+    q = y - Wpm.T @ s
+    grad_W0 = N @ q @ gradJ.T @ W0p
+    grad_W0 += N @ gradJ @ q.T @ W0p
+    grad_W0 = -grad_W0.T
+    grad[is_zero, :] = grad_W0
+
+    return grad
+
+
+def make_cvxpy_problem(A, k):
+    """
+    a cvxpy problem representing
+
+    argmin_x 1/2||Ax - y||_2^2 + ||Wx||_1
+
+    where A is a constant and y and W are parameters
+
+    use this when you plan to solve the same problem
+    repeatedly and speed is important, see https://www.cvxpy.org/tutorial/advanced/index.html#disciplined-parametrized-programming
+
+    putting beta loses the DPP structure,
+    so handle it by scaling W
+    """
+
+    m, n = A.shape
+    A = cp.Constant(A)
+    x = cp.Variable((n, 1), name='x')
+    y = cp.Parameter((m, 1), name='y')
+    W = cp.Parameter((k, n), name='W')
+
+    obj = 0.5 * cp.sum_squares(A @ x - y) + cp.norm1(W @ x)
+
+    prob = cp.Problem(cp.Minimize(obj))
+
+    prob.x = prob.variables()[0]
+    prob.y = prob.parameters()[0]
+    prob.W = prob.parameters()[1]
+
+    return prob
+
+#  solvers ---------------------------------------
+def solve_lasso_cvxpy(A, y, beta, W):
+    """
+    argmin_x 1/2 || Ax - y ||_2^2 + beta ||W x||_1
+
+    using cvxpy
+    """
+    y = y.reshape(y.shape[0], -1)  # add trailing dim if needed
+
+    prob = make_cvxpy_problem(A, W.shape[0])
+    return solve_cvxpy_problem(prob, y, beta, W)
+
 
 def solve_lasso_dual_scipy(A, y, beta, W):
     """
@@ -170,91 +283,3 @@ def solve_lasso_ADMM(A, y, beta, W, num_steps, rho):
         threshold = beta/rho
 
     return x
-
-
-def solve_lasso_cvxpy(A, y, beta, W):
-    """
-    argmin_x 1/2 || Ax - y ||_2^2 + beta ||W x||_1
-
-    using cvxpy
-    """
-    y = y.reshape(y.shape[0], -1)  # add trailing dim if needed
-
-    k = W.shape[0]
-    num = y.shape[1]
-    problem, params = setup_cvxpy_problem(*A.shape, k, num)
-    params['A'].value = np.array(A)
-    params['y'].value = np.array(y)
-    params['beta'].value = np.array(beta)
-    params['W'].value = W
-
-    problem.solve()
-
-    return params['x'].value
-
-
-def make_cvxpy_problem(A, y_array, W_array, k):
-    """
-    argmin_x 1/2||Ax - y||_2^2 + ||Wx||_1
-
-    putting beta loses the DPP structure,
-    so handle it by scaling W
-
-    y_array and W_array are "pass by refernce,"
-    so keep hold of them and change as needed
-    """
-
-    m, n = A.shape
-    A = cp.Constant(A)
-    x = cp.Variable((n, 1))
-    y = cp.Parameter((m, 1))
-    W = cp.Parameter((k, n))
-
-    obj = 0.5 * cp.sum_squares(A @ x - y) + cp.norm1(W @ x)
-
-    prob = cp.Problem(cp.Minimize(obj))
-
-    prob.parameters()[0].value = y_array
-    prob.parameters()[1].value = W_array
-
-    return prob
-
-
-@functools.lru_cache()  # caching because making the problem object is slow
-def setup_cvxpy_problem(m, n, k, batch_size=1):
-    """
-    sets up a cvxpy Problem representing
-
-    argmin_x 1/2||Ax - y||_2^2 + beta||Wx||_1
-
-    where A, y, beta, and W are left as free parameters
-
-    A: m x n
-    x: n x batch_size
-    y: m x batch_size
-    beta: scalar
-    W: k x n
-
-    """
-
-    A = cp.Parameter((m,n), name='A')
-    x = cp.Variable((n, batch_size), name='x')
-    y = cp.Parameter((m, batch_size), name='y')
-    beta = cp.Parameter(name='beta', nonneg=True)
-    W = cp.Parameter((k, n), name='W')
-    z = cp.Variable((k, batch_size), name='z')
-
-    objective_fn = 0.5 * cp.sum_squares(A @ x - y) + beta*cp.sum(cp.abs(z))
-    constraint = [W @ x == z]  # writing with this splitting makes is_dpp True
-    problem = cp.Problem(cp.Minimize(objective_fn), constraint)
-
-    params = {
-        'A':A,
-        'y':y,
-        'beta':beta,
-        'W':W,
-        'z':z,
-        'x':x
-    }
-
-    return problem, params

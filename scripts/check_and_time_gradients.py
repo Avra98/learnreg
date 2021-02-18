@@ -34,7 +34,6 @@ W = lr.make_transform(transform_type, n, k, transform_scale)
 x, y = lr.make_dataset(signal_type, A, noise_sigma, num_signals)
 
 
-
 def solve(prob):
     prob.solve()
     return prob.variables()[0].value
@@ -48,6 +47,7 @@ def MSE(x, y):
 
 def numerical_grad(prob, W, x, dx=1e-8):
     grad = np.zeros_like(W)
+    prob.W.value = W
     x_hat = solve(prob)
     is_zero_0 = np.abs(W@x_hat)[:, 0] < threshold
     for i, j in np.ndindex(W.shape):
@@ -71,74 +71,29 @@ def numerical_grad(prob, W, x, dx=1e-8):
     return grad
 
 
-# hand gradient funcs
-
-def null_proj(X):
-    """
-    N = I - X^+ X
-      = I - V E+ U* U E V*
-      = I - V E+E V*
-
-    where E+
-    """
-    rcond = 1e-15
-
-    if X.shape[0] == 0:
-        return np.eye(X.shape[1])
-
-    U, S, Vh = np.linalg.svd(X)
-    S = np.where(S >= rcond, 1.0, 0.0)
-
-    Vh = Vh[:len(S), :]
-
-    XpX = Vh.T @ np.diag(S) @ Vh  #
-
-    return np.eye(X.shape[1]) - XpX
-
-def hand_grad(prob, y, W, x):
-    x_hat = solve(prob)
-
-    is_zero = np.abs(W@x_hat)[:, 0] < threshold
-
-    W0 = W[is_zero, :]
-    s = np.sign(W@x_hat)[~is_zero]
-    Wpm = W[~is_zero, :]
-
-    gradJ = x_hat - x
-    grad = np.zeros_like(W)
-
-    # grad for the Wpm part
-    N = null_proj(W0)
-    grad[~is_zero, :] = - s @ gradJ.T @ N
-
-    # grad for the W0 part
-    W0p = np.linalg.pinv(W0)
-    q = y - Wpm.T @ s
-    grad_W0 = N @ q @ gradJ.T @ W0p
-    grad_W0 += N @ gradJ @ q.T @ W0p
-    grad_W0 = -grad_W0.T
-    grad[is_zero, :] = grad_W0
-
-    return grad
-
 def cvxpy_grad(prob, x):
     prob.solve(requires_grad=True)
-    x_hat = prob.variables()[0].value
+    x_hat = prob.x.value
 
-    prob.variables()[0].gradient = x_hat - x
+    prob.x.gradient = x_hat - x
     prob.backward()
 
     return prob.parameters()[1].gradient
 
-# gradients
+def hand_grad(prob, y, W, x):
+    prob.solve()
+    x_hat = prob.x.value
 
-prob = make_problem(A, y, W, k)
+    return lr.opt.compute_grad(x_hat, y, W, x, threshold)
+
+# gradients
+prob = lr.opt.make_cvxpy_problem(A, k)
+prob.y.value = y
 grad_num = numerical_grad(prob, W, x)
 grad_hand = hand_grad(prob, y, W, x)
 grad_cvxpy = cvxpy_grad(prob, x)
 
 # other useful calcs
-
 x_hat = solve(prob)
 is_zero = np.abs(W@x_hat)[:, 0] < threshold
 
