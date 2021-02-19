@@ -55,6 +55,9 @@ def main(signal_type,
     x_hat = opt.solve_lasso(A, test.y, beta, W)
     MSE = opt.MSE(x_hat, test.x)
 
+    print(f'beta: {beta:.3e}')
+    print(f'test MSE: {MSE:.3e}')
+
     if _run is not None:
         _run.info['MSE'] = MSE
         _run.info['beta'] = beta
@@ -366,7 +369,7 @@ def find_optimal_beta(A, x_GT, y, W, lower=0, upper=None):
 
     def J(beta):
         x_star = opt.solve_lasso(A, y, beta, W, prob=prob)
-        return MSE(x_star, x_GT)
+        return opt.MSE(x_star, x_GT)
 
     a, b = min_golden(J, lower, upper)
     val = (a+b)/2
@@ -450,7 +453,6 @@ def min_golden(f, a, b, tol=1e-5):
         return (a, d)
     else:
         return (c, b)
-
 
 
 def optimize(D,bh,beta):

@@ -75,7 +75,7 @@ def cvxpy_grad(prob, x):
     prob.solve(requires_grad=True)
     x_hat = prob.x.value
 
-    prob.x.gradient = (x_hat - x) / x.size
+    prob.x.gradient = 2 * (x_hat - x) / x.size
     prob.backward()
 
     return prob.parameters()[1].gradient

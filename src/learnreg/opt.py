@@ -11,7 +11,7 @@ import scipy.linalg
 
 
 def MSE(x, x_gt):
-    return 0.5 * ((x - x_gt)**2).mean()
+    return ((x - x_gt)**2).mean()
 
 
 def eval_lasso(A, x, y, beta, W):
@@ -102,7 +102,7 @@ def compute_grad(x_hat, y, W, x, threshold):
     s = np.sign(W@x_hat)[~is_zero]
     Wpm = W[~is_zero, :]
 
-    gradJ = (x_hat - x) / x.size
+    gradJ = 2 * (x_hat - x) / x.size
     grad = np.zeros_like(W)
 
     # grad for the Wpm part
