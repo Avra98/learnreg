@@ -306,6 +306,7 @@ def do_learning(A, W0, train, eval_upper_fcn,
 
         # save current W
         if (
+
                 checkpoint_frequency is not None and
                 time.time() - time_last_save > checkpoint_frequency
         ):
