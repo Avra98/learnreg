@@ -39,19 +39,21 @@ def main(signal_type,
 
     """
 
-
     A = make_foward_model(forward_model_type, n)
     train = make_dataset(signal_type, A, noise_sigma, num_training)
     test = make_dataset(signal_type, A, noise_sigma, num_testing)
     W = make_transform(transform_type, n, k, transform_scale)
-    W0 = W.copy()
+
+    solver = opt.CvxpySolver(A, k, sign_threshold)
 
     W = do_learning(
-        A, 1.0, W, train,
-        learning_rate, num_steps, batch_size, print_interval=100, sign_threshold=sign_threshold)
+        A, W, train, solver.eval_upper,
+        learning_rate, num_steps, batch_size, print_interval=100)
 
     beta = find_optimal_beta(A, test.x, test.y, W)
-    MSE = opt.eval_upper(A, test.x, test.y, beta, W)
+
+    x_hat = opt.solve_lasso(A, test.y, beta, W)
+    MSE = opt.MSE(x_hat, test.x)
 
     if _run is not None:
         _run.info['MSE'] = MSE
@@ -237,11 +239,13 @@ def minibatcher(N, batch_size):
         yield inds[batch_ind*batch_size:(batch_ind+1)*batch_size]
 
 
-def do_learning(A, beta, W0, train, eval_upper_fcn,
+def do_learning(A, W0, train, eval_upper_fcn,
                 learning_rate, num_steps, batch_size, print_interval=1,
                 checkpoint_dir='checkpoints',
                 checkpoint_frequency=None):
     """
+
+
     train : NamedTupe with fields x and y
     eval_upper_fcn : computes value and gradient of upper-level optimization problem
 
@@ -252,7 +256,6 @@ def do_learning(A, beta, W0, train, eval_upper_fcn,
         outpath = pathlib.Path(checkpoint_dir, 'W_' +  shortuuid.uuid())
         print(f'Saving to {outpath}')
         time_last_save = time.time()
-
 
     x, y = train
     train_length = x.shape[1]
@@ -265,7 +268,7 @@ def do_learning(A, beta, W0, train, eval_upper_fcn,
     epoch = 0
 
     print(f'{"step":12s}{"epoch":6s}'
-          f'{"cur loss":15s}{"epoch avg loss":15s}')
+          f'{"cur loss":15s}{"avg loss":15s}')
 
     # main loop
     for step in range(num_steps):
@@ -278,11 +281,11 @@ def do_learning(A, beta, W0, train, eval_upper_fcn,
         # compute batch gradient
         grad = np.zeros_like(W)
         for idx in batch_indices:
-            x_cur = x[:, idx]
-            y_cur = y[:, idx]
+            x_cur = x[:, [idx]]
+            y_cur = y[:, [idx]]
 
-            loss_cur, grad_cur = eval_upper_fcn(A, x_cur, y_cur, beta, W,
-                                            requires_grad=True)
+            loss_cur, grad_cur = eval_upper_fcn(A, y_cur, W, x_cur,
+                                                requires_grad=True)
             MSE_history[idx] = loss_cur
             grad += grad_cur / batch_size
 
@@ -293,7 +296,7 @@ def do_learning(A, beta, W0, train, eval_upper_fcn,
         if step % print_interval == 0 or step == num_steps-1:
             epoch_loss = np.nanmean(MSE_history)
             print(f'{step:<12d}{epoch:<6d}'
-                  f'{last_loss:<15.3e}{epoch_loss:<15.3e}')
+                  f'{loss_cur:<15.3e}{epoch_loss:<15.3e}')
 
             #if logger is not None:
             #    logger.log_scalar('train.loss', last_loss, step)
@@ -310,12 +313,6 @@ def do_learning(A, beta, W0, train, eval_upper_fcn,
 
 
 # utilities
-
-
-def MSE(x, x_gt):
-    return ((x - x_gt)**2).mean()
-
-
 def permute_for_display(W):
     """
     sort the rows of W by starting at the top
@@ -365,18 +362,19 @@ def find_optimal_beta(A, x_GT, y, W, lower=0, upper=None):
 
         upper = float(max(upper, lower))
 
+    prob = opt.make_cvxpy_problem(A, W.shape[0])
+
     def J(beta):
-        x_star = opt.solve_lasso(A, y, beta, W)
+        x_star = opt.solve_lasso(A, y, beta, W, prob=prob)
         return MSE(x_star, x_GT)
 
     a, b = min_golden(J, lower, upper)
     val = (a+b)/2
     if np.abs(val-lower)/upper < 1e-2 or np.abs(val-upper)/upper < 1e-2:
-        print("warning, optimal beta is close to one of the limits")
+        print(f'warning, optimal beta ({val:.3e}) '
+              f'is close to one of the limits ({lower:.3e}, {upper:.3e})')
 
-    return (a+b)/2
-
-
+    return val
 
 
 def find_optimal_thres(x_cvx,W,y,beta,lower=1e-16,upper=1e-1):
@@ -454,45 +452,6 @@ def min_golden(f, a, b, tol=1e-5):
         return (c, b)
 
 
-def find_signs(x, W, threshold=1e-6):
-    """
-    given x* and W, find the necessary sign matrices:
-    W_0, W_pm, and s
-    """
-    W = torch.as_tensor(W)
-
-    Wx = W @ x
-    is_zero = (Wx.abs() < threshold).squeeze()
-    W0 = W[is_zero, :]
-    Wpm = W[~is_zero, :]
-    s = (Wpm @ x).sign()
-
-    return W0, Wpm, s
-
-def closed_form(W0, Wpm, s, y, beta):
-    """
-    implemention of (XXX) from "XXXXX" Tibshi...
-    https://arxiv.org/pdf/1805.07682.pdf
-
-    """
-    rcond = 1e-15  # cutoff for small singular values
-
-    W0 = torch.as_tensor(W0)
-    y = torch.as_tensor(y)
-
-    y_term = y - beta * Wpm.T @ s
-
-    """
-    if W0.shape[0] == 0:
-        return y_term
-
-    U, S, V = torch.svd(W0)
-    S = torch.where(S >= rcond, torch.ones_like(S), torch.zeros_like(S))
-    proj = V @ torch.diag(S) @ V.T
-    """
-
-    proj = W0.T @ (W0 @ W0.T).inverse() @ W0
-    return y_term - proj @ y_term
 
 def optimize(D,bh,beta):
     n = D.shape[1]

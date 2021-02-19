@@ -1,7 +1,7 @@
 """
 
 quick example:
->>python scripts/run_exp.py with basic 'num_steps=1000' 'num_test python scripts/run_exp.py with basic 'num_steps=1000' 'num_testing=1'
+>>python scripts/run_exp.py with basic 'num_steps=100' 'num_testing=1'
 """
 
 import sacred

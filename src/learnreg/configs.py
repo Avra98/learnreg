@@ -1,7 +1,7 @@
 
 def basic():
     learning_rate = 1e-3
-    num_steps = int(1e5)
+    num_steps = int(1e6)
     sign_threshold = 1e-4
 
     signal_type = 'piecewise_constant'
@@ -10,7 +10,7 @@ def basic():
 
     forward_model_type = 'identity'
     num_training = 10000
-    batch_size = 10
+    batch_size = 1
 
     transform_type = 'identity'
     k = 64

@@ -9,11 +9,12 @@ import numpy as np
 import scipy.optimize
 import scipy.linalg
 
+
 def MSE(x, x_gt):
-    return ((x - x_gt)**2).mean()
+    return 0.5 * ((x - x_gt)**2).mean()
 
 
-def eval_lasso(x, y, beta, W):
+def eval_lasso(A, x, y, beta, W):
     """
     compute J(x) = 1/2 || Ax - y ||_2^2 + beta ||W x||_1
     """
@@ -52,16 +53,16 @@ class CvxpySolver():
         self.prob = make_cvxpy_problem(A, k)
 
 
-    def eval_upper(self, A, y, beta, W, x_GT, requires_grad=False):
-        x_hat = solve_cvxpy_problem(self.prob, y, beta, W)
-        MSE = MSE(x_hat, x_GT)
+    def eval_upper(self, A, y, W, x_GT, requires_grad=False):
+        x_hat = solve_cvxpy_problem(self.prob, y, 1.0, W)
+        Q = MSE(x_hat, x_GT)
 
         if not requires_grad:
-            return MSE
+            return Q
 
         grad = compute_grad(x_hat, y, W, x_GT, self.threshold)
 
-        return MSE, grad
+        return Q, grad
 
 def solve_cvxpy_problem(prob, y, beta, W):
     prob.y.value = y
@@ -101,7 +102,7 @@ def compute_grad(x_hat, y, W, x, threshold):
     s = np.sign(W@x_hat)[~is_zero]
     Wpm = W[~is_zero, :]
 
-    gradJ = x_hat - x
+    gradJ = (x_hat - x) / x.size
     grad = np.zeros_like(W)
 
     # grad for the Wpm part
@@ -127,6 +128,8 @@ def make_cvxpy_problem(A, k):
 
     where A is a constant and y and W are parameters
 
+    can set this with, e.g.,  prob.y.value
+
     use this when you plan to solve the same problem
     repeatedly and speed is important, see https://www.cvxpy.org/tutorial/advanced/index.html#disciplined-parametrized-programming
 
@@ -150,8 +153,9 @@ def make_cvxpy_problem(A, k):
 
     return prob
 
+
 #  solvers ---------------------------------------
-def solve_lasso_cvxpy(A, y, beta, W):
+def solve_lasso_cvxpy(A, y, beta, W, prob=None):
     """
     argmin_x 1/2 || Ax - y ||_2^2 + beta ||W x||_1
 
@@ -159,8 +163,15 @@ def solve_lasso_cvxpy(A, y, beta, W):
     """
     y = y.reshape(y.shape[0], -1)  # add trailing dim if needed
 
-    prob = make_cvxpy_problem(A, W.shape[0])
-    return solve_cvxpy_problem(prob, y, beta, W)
+    x_hat = np.zeros_like(y)
+
+    if prob is None:
+        prob = make_cvxpy_problem(A, W.shape[0])
+
+    for i in range(y.shape[1]):
+        x_hat[:, i] = solve_cvxpy_problem(prob, y[:,[i]], beta, W)[:, 0]
+
+    return x_hat
 
 
 def solve_lasso_dual_scipy(A, y, beta, W):
@@ -199,8 +210,6 @@ def solve_lasso_dual_PGD(A, y, beta, W, num_steps=100, step_size=None):
         u[u > beta] = beta
         u[u < -beta] = -beta
 
-
-
     info = {
         'step_size': step_size,
         'u': u}
@@ -213,10 +222,7 @@ def solve_lasso_dual_PGD(A, y, beta, W, num_steps=100, step_size=None):
         yterm = y[:, i] - beta * Wpm.T @ s
         x[:, i] = yterm - (np.linalg.pinv(W0) @ W0) @ yterm
 
-
-    return x #y - W.T @ u
-
-
+    return x
 
 
 def solve_lasso_ADMM(A, y, beta, W, num_steps, rho):
