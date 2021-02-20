@@ -48,7 +48,7 @@ def main(signal_type,
 
     W = do_learning(
         A, W, train, solver.eval_upper,
-        learning_rate, num_steps, batch_size, print_interval=100)
+        learning_rate, num_steps, batch_size, print_interval=100, checkpoint_frequency=5)
 
     beta = find_optimal_beta(A, test.x, test.y, W)
 
@@ -188,10 +188,18 @@ def make_measurement(x, A, sigma):
 
 
 def make_dataset(signal_type, A, noise_sigma, num_signals, signal_opts=None):
+    #1d_signal_types = ('piecewise_constant', )
+    #2d_signal_types = ('',)
 
+    #if signal_type in 1d_signal_types:
     x = make_signal(signal_type, A.shape[1], num_signals=num_signals,
                     signal_opts=signal_opts)
     y = make_measurement(x, A, noise_sigma)
+    #elif signal type in 2d_signal_types:
+    #    x, y = make_image_measurement()
+    #else:
+    #    raise ValueError(signal_type)
+
     return Dataset(x=x, y=y)
 
 def patch_dataset(num_signals,sigma):
@@ -310,8 +318,12 @@ def do_learning(A, W0, train, eval_upper_fcn,
                 checkpoint_frequency is not None and
                 time.time() - time_last_save > checkpoint_frequency
         ):
-            np.save(outpath, np.array(W.detach()))
+            np.save(outpath, W)
             time_last_save = time.time()
+
+    # save the final W
+    if checkpoint_frequency is not None:
+        np.save(outpath, W)
 
     return np.array(W)
 

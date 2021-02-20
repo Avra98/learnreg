@@ -78,7 +78,7 @@ def null_proj(X):
       = I - V E+ U* U E V*
       = I - V E+E V*
 
-    where E+
+    where E+...
     """
     rcond = 1e-15
 
@@ -102,7 +102,7 @@ def compute_grad(x_hat, y, W, x, threshold):
     s = np.sign(W@x_hat)[~is_zero]
     Wpm = W[~is_zero, :]
 
-    gradJ = 2 * (x_hat - x) / x.size
+    gradJ = 2 * (x_hat - x) / x.size  # careful here! this is correct for MSE
     grad = np.zeros_like(W)
 
     # grad for the Wpm part
