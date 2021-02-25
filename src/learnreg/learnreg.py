@@ -21,12 +21,12 @@ Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 # top-level driver code
 def main(signal_type,
          n,
-         k,
          forward_model_type,
          noise_sigma,
          num_training,
          transform_type,
          transform_scale,
+         transform_opts,
          num_testing,
          learning_rate,
          num_steps,
@@ -39,16 +39,16 @@ def main(signal_type,
 
     """
 
-    A = make_foward_model(forward_model_type, n)
+    A = make_forward_model(forward_model_type, n)
     train = make_dataset(signal_type, A, noise_sigma, num_training)
     test = make_dataset(signal_type, A, noise_sigma, num_testing)
-    W = make_transform(transform_type, n, k, transform_scale)
+    W = make_transform(transform_type, n, transform_scale, **transform_opts)
 
-    solver = opt.CvxpySolver(A, k, sign_threshold)
+    solver = opt.CvxpySolver(A, W.shape[0], sign_threshold)
 
     W = do_learning(
         A, W, train, solver.eval_upper,
-        learning_rate, num_steps, batch_size, print_interval=100, checkpoint_frequency=5)
+        learning_rate, num_steps, batch_size, print_interval=100)
 
     beta = find_optimal_beta(A, test.x, test.y, W)
 
@@ -82,7 +82,7 @@ def main_image(filename,patch_size,
     np.random.seed(SEED)
     n=patch_size**2
     k=n-1
-    A = make_foward_model(forward_model_type, n)
+    A = make_forward_model(forward_model_type, n)
     train,origin=image2patchset(noise_sigma,patch_size,filename='barbara.png')
     W = make_transform(transform_type, n, k, transform_scale)
     W0 = W.copy()
@@ -129,7 +129,8 @@ def make_signal(sig_type, n, num_signals, signal_opts=None):
 
     return sigs
 
-def make_constant_patch_signal(n, num_signals, num_jumps):
+
+def make_constant_patch_signal(n, num_signals, num_jumps=None):
     """
     separable sum of piecewise constant signals
     reshaped into vectors
@@ -137,13 +138,15 @@ def make_constant_patch_signal(n, num_signals, num_jumps):
     m = math.isqrt(n)
     assert m**2 == n
 
-    sigs_a = make_piecewise_const_signal(m, num_jumps, num_signals=num_signals)
-    sigs_b = make_piecewise_const_signal(m, num_jumps, num_signals=num_signals)
+    if num_jumps is None:
+        num_jumps = m/4
+
+    sigs_a = make_piecewise_const_signal(m, num_signals, num_jumps)
+    sigs_b = make_piecewise_const_signal(m, num_signals, num_jumps)
 
     sigs = sigs_a[:, np.newaxis, :] + sigs_b[np.newaxis, :, :]
 
     return sigs.reshape(n, num_signals)/2  # so the max is 1
-
 
 
 def make_piecewise_const_signal(n, num_signals=1, num_jumps=None):
@@ -493,7 +496,7 @@ def TV_denoise(m,x1,y1,b_opt):
     return xrec, src.MSE(x1,xrec)
 
 # forward models
-def make_foward_model(forward_model_type, n):
+def make_forward_model(forward_model_type, n):
     if forward_model_type == 'identity':
         A = np.eye(n)
     else:
@@ -504,22 +507,34 @@ def make_foward_model(forward_model_type, n):
 # transforms ----------------------
 
 
-def make_transform(transform_type, n, k, scale=1.0):
-    k = int(k)
+def make_transform(transform_type, n, scale=1.0, **kwargs):
     if transform_type == 'identity':
-        #assert k <= n
-        W = np.eye(k, n)
+        W = np.eye(n, n)
         W = W - W.mean(axis=1, keepdims=True)
+
     elif transform_type == 'TV':
         W = make_conv(np.array([1.0, -1.0]), n)
-        #assert k <= W.shape[0]
-        W = W[:k]
+
     elif transform_type == 'DCT':
-        #assert k <= n
         W = scipy.fft.dct(np.eye(n), axis=0, norm='ortho')
-        W = W[:k]
+
     elif transform_type == 'random':
-        W = np.random.randn(k, n)
+        W = np.random.randn(kwargs['k'], n)
+
+    elif transform_type == 'TV-2D':
+        m = math.isqrt(n)
+        assert m**2 == n  # n must be perfect square
+        W_horizontal = make_conv(np.array([1.0, -1.0]), n)
+        W_horizontal = np.delete(W_horizontal, slice(m-1, None, m), axis=0)
+
+        h = np.zeros(m+1)
+        h[0] = -1.0
+        h[-1] = 1.0
+        W_vertical = make_conv(h, n)
+
+        W = np.concatenate((W_horizontal, W_vertical), axis=0)
+
+
     else:
         raise ValueError(transform_type)
 
@@ -550,9 +565,7 @@ def make_conv(h, n):
     return h_repeat[0].T.flip(1).numpy()
 
 
-
 def image2patchset(noise_sigma,patch_size=8,filename='barbara.png'):
-
     img = cv2.imread(filename)[:,:,0]
     noise_img = img + np.random.normal(0,noise_sigma,[img.shape[0],img.shape[1]])
     p, origin = extract_grayscale_patches( img, (patch_size,patch_size), stride=(patch_size,patch_size) )
@@ -567,7 +580,6 @@ def patchset2image(vector,origin):
     return denoised_image
 
 
-
 def patch2vector(p,p1):
     clean = np.reshape(p,[p.shape[1]*p.shape[1],p.shape[0]])
     noise = np.reshape(p1,[p1.shape[1]*p1.shape[1],p1.shape[0]])
@@ -580,7 +592,6 @@ def vector2patch(p):
     denoised = np.reshape(p,[int(p.shape[1]),int(np.sqrt(p.shape[0])),int(np.sqrt(p.shape[0]))])
     d=denoised*255
     return d
-
 
 
 ###Image to patches and vice versa     [Code source :http://jamesgregson.ca/extract-image-patches-in-python.html]
