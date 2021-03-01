@@ -3,7 +3,7 @@
 add the flag "-m monogodb" to save to the monogodb (assuming it is running)
 
 quick example:
->>python scripts/run_exp.py with basic 'num_steps=100' 'num_testing=1'
+>> python scripts/run_exp.py with basic 'num_steps=100' 'num_testing=1'
 
 
 """
@@ -12,10 +12,11 @@ import sacred
 
 import learnreg as lr
 
-
 ex = sacred.Experiment()
 
 # define named configs to be used from the command line
+
+
 @ex.named_config
 def basic():
     learning_rate = 1e-3
@@ -39,16 +40,19 @@ def basic():
 
 
 @ex.named_config
+def basic_patch():
+    pass
+
+
+@ex.named_config
 def baseline(n, signal_type):
     learning_rate = 0.0
     num_steps = 0
 
     if signal_type == 'piecewise_constant':
         transform_type = 'TV'
-        k = n - 1
     elif signal_type == 'DCT-sparse':
         transform_type = 'DCT'
-        k = n
     else:
         raise ValueError(signal_type)
 

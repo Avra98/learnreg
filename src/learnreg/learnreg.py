@@ -324,6 +324,9 @@ def do_learning(A, W0, train, eval_upper_fcn,
     # save the final W
     if checkpoint_frequency is not None:
         np.save(outpath, W)
+        print(f'Saved to {outpath}')
+
+        
 
     return np.array(W)
 
