@@ -25,10 +25,10 @@ Dataset = collections.namedtuple('Dataset', ['x', 'y'])
 # top-level driver code
 def main(signal_type,
          n,
-         k,
          forward_model_type,
          noise_sigma,
          transform_type,
+         transform_opts,
          transform_scale,
          learning_rate,
          num_steps,
@@ -50,9 +50,8 @@ def main(signal_type,
         test = train
     else :
         test = make_dataset(signal_type, A, noise_sigma, num_testing)
-        
-    
-    W = make_transform(transform_type, n,k, transform_scale)
+            
+    W = make_transform(transform_type, n, transform_scale, **transform_opts)
 
     solver = opt.CvxpySolver(A, W.shape[0], sign_threshold)
 
@@ -308,8 +307,8 @@ def do_learning(A, W0, train, eval_upper_fcn,
     checkpoint_frequency: save results every X seconds
     """
 
+    outpath = pathlib.Path(checkpoint_dir, 'W_' +  shortuuid.uuid())    
     if checkpoint_frequency is not None:
-        outpath = pathlib.Path(checkpoint_dir, 'W_' +  shortuuid.uuid())
         print(f'Saving to {outpath}')
         time_last_save = time.time()
 
@@ -367,11 +366,8 @@ def do_learning(A, W0, train, eval_upper_fcn,
             time_last_save = time.time()
 
     # save the final W
-    if checkpoint_frequency is not None:
-        np.save(outpath, W)
-        print(f'Saved to {outpath}')
-
-        
+    np.save(outpath, W)
+    print(f'Saved to {outpath}')
 
     return np.array(W)
 
@@ -583,11 +579,7 @@ def make_forward_model(forward_model_type, n):
 
 
 
-
-
-
-
-def make_transform(transform_type, n, k, scale=1.0):
+def make_transform(transform_type, n, scale=1.0, **opts):
     if transform_type == 'identity':
         W = np.eye(n, n)
         W = W - W.mean(axis=1, keepdims=True)
@@ -599,7 +591,7 @@ def make_transform(transform_type, n, k, scale=1.0):
         W = scipy.fft.dct(np.eye(n), axis=0, norm='ortho')
 
     elif transform_type == 'random':
-        W = np.random.randn(k, n)
+        W = np.random.randn(opts['k'], n)
 
     elif transform_type == 'TV-2D':
         m = math.isqrt(n)
