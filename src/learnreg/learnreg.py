@@ -12,8 +12,12 @@ import math
 import shortuuid
 import time
 import pathlib
-
+import cv2
 import learnreg.opt as opt
+import math 
+from math import log10, sqrt 
+
+
 
 # datatypes
 Dataset = collections.namedtuple('Dataset', ['x', 'y'])
@@ -24,31 +28,43 @@ def main(signal_type,
          k,
          forward_model_type,
          noise_sigma,
-         num_training,
          transform_type,
          transform_scale,
-         num_testing,
          learning_rate,
          num_steps,
          batch_size,
          sign_threshold,
          seed,
-         _run=None):
+         _run=None,
+        num_training=10000,
+        num_testing=1000):
     """
 
 
     """
 
-    A = make_foward_model(forward_model_type, n)
+    A = make_forward_model(forward_model_type, n)
     train = make_dataset(signal_type, A, noise_sigma, num_training)
-    test = make_dataset(signal_type, A, noise_sigma, num_testing)
-    W = make_transform(transform_type, n, k, transform_scale)
+    
+    if signal_type == 'image_patch':
+        test = train
+    else :
+        test = make_dataset(signal_type, A, noise_sigma, num_testing)
+        
+    
+    W = make_transform(transform_type, n,k, transform_scale)
 
-    solver = opt.CvxpySolver(A, k, sign_threshold)
+    solver = opt.CvxpySolver(A, W.shape[0], sign_threshold)
 
     W = do_learning(
         A, W, train, solver.eval_upper,
-        learning_rate, num_steps, batch_size, print_interval=100, checkpoint_frequency=5)
+        learning_rate, num_steps, batch_size, print_interval=100)
+    
+    if signal_type == 'image_patch':
+        test.x = test.x[:,:num_testing]
+        test.y = test.y[:,:num_testing]
+        fig, ax = reports.show_W_patch(W)
+        
 
     beta = find_optimal_beta(A, test.x, test.y, W)
 
@@ -63,8 +79,29 @@ def main(signal_type,
         _run.info['beta'] = beta
         _run.info['W'] = W
     else:
-        return MSE, beta, W
+        return W
+        #return MSE, beta, W
 
+    
+def make_dataset(signal_type, A, noise_sigma, num_signals, signal_opts=None):
+    oned_signal_types = ['piecewise_constant', 'DCT-sparse',
+                       'constant_patch']
+    twod_signal_types = ['image_patch']
+    patch_size= int(np.sqrt(A.shape[1]))
+
+    if signal_type in oned_signal_types:
+        x = make_signal(signal_type, A.shape[1], num_signals=num_signals,
+                    signal_opts=signal_opts)
+        y = make_measurement(x, A, noise_sigma)
+        
+    elif signal_type in twod_signal_types:
+        [x, y,_,_,_] = image2patchset(noise_sigma,patch_size,filename='barbara.png')
+        
+    else:
+        raise ValueError(signal_type)
+        
+    train = datasetconv(x,y)
+    return train    
 
 
 ##Driver code for training patches from images. Denoising is on the same patches of the images
@@ -77,27 +114,34 @@ def main_image(filename,patch_size,
          learning_rate,
          num_steps,
          sign_threshold,
+         batch_size,      
          _run=None):
 
     np.random.seed(SEED)
     n=patch_size**2
     k=n-1
-    A = make_foward_model(forward_model_type, n)
-    train,origin=image2patchset(noise_sigma,patch_size,filename='barbara.png')
+    A = make_forward_model(forward_model_type, n)
+    train,origin,img,noise_img=image2patchset(noise_sigma,patch_size,filename='barbara.png')
     W = make_transform(transform_type, n, k, transform_scale)
     W0 = W.copy()
     beta = 1.0
     print_interval = 100
-    W = do_learning(A, beta, W, train, learning_rate, num_steps, print_interval, sign_threshold, logger=_run)
+    #W = do_learning(A, beta, W, train, learning_rate, num_steps, print_interval, sign_threshold, logger=_run)
+
+    solver = opt.CvxpySolver(A, W.shape[0], sign_threshold)
+    
+    W=do_learning(
+      A, W, train, solver.eval_upper,
+      learning_rate, num_steps, batch_size, print_interval=100)
 
 
-
+    
     beta_W = 1.0
     denoised=np.zeros((patch_size**2,train.x.shape[1]))
     #beta_W = find_optimal_beta(A, test.x, test.y, W, 1e2).item()
-    batch_size=64  ## Solving lasso on all the patches faces memory issue, so solve lasso by batches
-    for i in range(0,train.x.shape[1],batch_size):
-        denoised[:,i:i+batch_size]=solve_lasso(A, train.y[:,i:i+batch_size], beta_W, W)
+    batch_size2=64  ## Solving lasso on all the patches faces memory issue, so solve lasso by batches
+    for i in range(0,train.x.shape[1],batch_size2):
+        denoised[:,i:i+batch_size2]=opt.solve_lasso(A, train.y[:,i:i+batch_size2], beta_W, W)
 
     denoised_image=patchset2image(denoised,origin)
 
@@ -106,9 +150,49 @@ def main_image(filename,patch_size,
         _run.info['beta_W'] = beta_W
         _run.info['W'] = W
     else:
-        return denoised_image,W
+         return denoised_image,W,img,noise_img
 
 
+ 
+
+    
+def test_image(testnoise,W,beta,images = ['cameraman.tif','house.tif'
+            ,'jetplane.tif','lake.tif'
+            ,'livingroom.tif','mandril_gray.tif'
+            ,'peppers_gray.tif'
+            ,'pirate.tif','walkbridge.tif'
+            ,'woman_blonde.tif','woman_darkhair.tif']):
+    
+    d2=np.zeros([512,512,len(images)])
+    c2=np.zeros([512,512,len(images)])
+    n2=np.zeros([512,512,len(images)])
+    pn2=np.zeros([1,len(images)])
+    pd2=np.zeros([1,len(images)])
+    
+    for i in range(len(images)):
+        [d,c,n,pn,pd]=denoise_with_W(testnoise,W,beta,images[i])
+        d2[:,:,i]=d
+        c2[:,:,i]=c
+        n2[:,:,i]=n
+        pn2[:,i]=pn
+        pd2[:,i]=pd
+        
+    for i in range(0,len(images)):
+        fig, (ax1, ax2,ax3) = plt.subplots(1, 3,figsize=(15,15))
+        ax1.imshow(c2[:,:,i],'gray')
+        ax1.set_title('Clean image')
+        ax2.imshow(n2[:,:,i],'gray')
+        ax2.set_title('Noisy image ')
+        ax3.imshow(d2[:,:,i],'gray')
+        ax3.set_title('Recon image')
+        plt.pause(0.2)
+    return d2,c2,n2,pn2,pd2   
+            
+    
+    
+    
+    
+    
 # problem setup
 
 
@@ -120,16 +204,14 @@ def make_signal(sig_type, n, num_signals, signal_opts=None):
         sigs = make_piecewise_const_signal(n, num_signals, **signal_opts)
     elif sig_type == 'DCT-sparse':
         sigs = make_DCT_signal(n, num_signals, **signal_opts)
-    elif sig_type == 'image_patch':
-        sigs = XXXXXX
     elif sig_type == 'constant_patch':
         sigs = make_constant_patch_signal(n, num_signals, **signal_opts)
     else:
         raise ValueError(sig_type)
-
     return sigs
 
-def make_constant_patch_signal(n, num_signals, num_jumps):
+
+def make_constant_patch_signal(n, num_signals, num_jumps=None):
     """
     separable sum of piecewise constant signals
     reshaped into vectors
@@ -137,13 +219,15 @@ def make_constant_patch_signal(n, num_signals, num_jumps):
     m = math.isqrt(n)
     assert m**2 == n
 
-    sigs_a = make_piecewise_const_signal(m, num_jumps, num_signals=num_signals)
-    sigs_b = make_piecewise_const_signal(m, num_jumps, num_signals=num_signals)
+    if num_jumps is None:
+        num_jumps = m/4
+
+    sigs_a = make_piecewise_const_signal(m, num_signals, num_jumps)
+    sigs_b = make_piecewise_const_signal(m, num_signals, num_jumps)
 
     sigs = sigs_a[:, np.newaxis, :] + sigs_b[np.newaxis, :, :]
 
     return sigs.reshape(n, num_signals)/2  # so the max is 1
-
 
 
 def make_piecewise_const_signal(n, num_signals=1, num_jumps=None):
@@ -187,46 +271,7 @@ def make_measurement(x, A, sigma):
     return y
 
 
-def make_dataset(signal_type, A, noise_sigma, num_signals, signal_opts=None):
-    #1d_signal_types = ('piecewise_constant', )
-    #2d_signal_types = ('',)
 
-    #if signal_type in 1d_signal_types:
-    x = make_signal(signal_type, A.shape[1], num_signals=num_signals,
-                    signal_opts=signal_opts)
-    y = make_measurement(x, A, noise_sigma)
-    #elif signal type in 2d_signal_types:
-    #    x, y = make_image_measurement()
-    #else:
-    #    raise ValueError(signal_type)
-
-    return Dataset(x=x, y=y)
-
-def patch_dataset(num_signals,sigma):
-    import hdf5storage
-    ##Import data
-    mat = hdf5storage.loadmat('patch.mat')
-    x = mat['impatc']
-    y = mat['impatn']   ##Generate two types of measurements, 1) noise added in image domain (y), 2) noise added in patch domain (y1)
-    ##Subtract mean
-    x=x-np.mean(x,axis=0)
-    y=y-np.mean(y,axis=0)
-    ##Convert to torch
-    #x=torch.from_numpy(x)
-    #y=torch.from_numpy(y)
-    ##Generate y1
-    y1=x + np.random.normal(0, sigma, x.shape)
-    nData=x.shape[1]
-    ##Scramble data
-    perm = np.random.permutation(nData)
-    x = x[:,perm]
-    y = y[:,perm]
-    y1 = y1[:,perm]
-    ##Select subset of data to work with
-    x=x[:,:num_signals]
-    y1=y1[:,:num_signals]
-
-    return Dataset(x=x, y=y1)
 
 
 def minibatcher(N, batch_size):
@@ -329,6 +374,34 @@ def do_learning(A, W0, train, eval_upper_fcn,
         
 
     return np.array(W)
+
+
+
+def denoise_with_W(noise_sigma,W,beta,image_file):
+    patch_size=int(np.sqrt(W.shape[1]))
+    x,y,origin,image,noise_img=image2patchset(noise_sigma,patch_size,image_file)
+    #beta_W = 1.0
+    denoised=np.zeros((patch_size**2,x.shape[1]))
+    batch_size=64  ## Solving lasso on all the patches faces memory issue, so solve lasso by batches
+    A = make_forward_model('identity', patch_size**2)
+    for i in range(0,x.shape[1],batch_size):
+        denoised[:,i:i+batch_size]=opt.solve_lasso(A, y[:,i:i+batch_size], beta, W)
+    denoised_image=patchset2image(denoised,origin)
+    psnr_n = PSNR(image,noise_img)
+    psnr_d = PSNR(image,denoised_image)
+    return denoised_image,image,noise_img,psnr_n,psnr_d
+
+
+def PSNR(original, compressed): 
+    mse = np.mean((original - compressed) ** 2) 
+    if(mse == 0):
+        return 100
+    max_pixel = 1.0
+    psnr = 20 * np.log10(max_pixel / sqrt(mse)) 
+    return psnr
+
+
+
 
 
 # utilities
@@ -496,7 +569,9 @@ def TV_denoise(m,x1,y1,b_opt):
     return xrec, src.MSE(x1,xrec)
 
 # forward models
-def make_foward_model(forward_model_type, n):
+
+
+def make_forward_model(forward_model_type, n):
     if forward_model_type == 'identity':
         A = np.eye(n)
     else:
@@ -507,26 +582,44 @@ def make_foward_model(forward_model_type, n):
 # transforms ----------------------
 
 
+
+
+
+
+
 def make_transform(transform_type, n, k, scale=1.0):
-    k = int(k)
     if transform_type == 'identity':
-        #assert k <= n
-        W = np.eye(k, n)
+        W = np.eye(n, n)
         W = W - W.mean(axis=1, keepdims=True)
+
     elif transform_type == 'TV':
         W = make_conv(np.array([1.0, -1.0]), n)
-        #assert k <= W.shape[0]
-        W = W[:k]
+
     elif transform_type == 'DCT':
-        #assert k <= n
         W = scipy.fft.dct(np.eye(n), axis=0, norm='ortho')
-        W = W[:k]
+
     elif transform_type == 'random':
         W = np.random.randn(k, n)
+
+    elif transform_type == 'TV-2D':
+        m = math.isqrt(n)
+        assert m**2 == n  # n must be perfect square
+        W_horizontal = make_conv(np.array([1.0, -1.0]), n)
+        W_horizontal = np.delete(W_horizontal, slice(m-1, None, m), axis=0)
+
+        h = np.zeros(m+1)
+        h[0] = -1.0
+        h[-1] = 1.0
+        W_vertical = make_conv(h, n)
+
+        W = np.concatenate((W_horizontal, W_vertical), axis=0)
+
+
     else:
         raise ValueError(transform_type)
 
     return scale * W
+
 
 
 def make_conv(h, n):
@@ -548,43 +641,47 @@ def make_conv(h, n):
     m = len(h)
     pad = n-m # adds to beginning and end
     h_repeat = torch.nn.functional.unfold(
-        torch.from_numpy(h).view(1, 1, -1, 1), (n, 1),
-        padding=(pad, 0))
+               torch.from_numpy(h).view(1, 1, -1, 1), (n, 1),
+               padding=(pad, 0))
     return h_repeat[0].T.flip(1).numpy()
 
 
-
-def image2patchset(noise_sigma,patch_size=8,filename='barbara.png'):
-
-    img = cv2.imread(filename)[:,:,0]
+def image2patchset(noise_sigma,patch_size,filename):
+    img = cv2.imread(filename).sum(2)/3
+    img=img/255
+    noise_sigma=noise_sigma/255
     noise_img = img + np.random.normal(0,noise_sigma,[img.shape[0],img.shape[1]])
-    p, origin = extract_grayscale_patches( img, (patch_size,patch_size), stride=(patch_size,patch_size) )
-    p1, origin1 = extract_grayscale_patches( noise_img, (patch_size,patch_size), stride=(patch_size,patch_size))
-    train= patch2vector(p,p1)
-    return train,origin1
+    p, origin = extract_grayscale_patches( img, (patch_size,patch_size), stride=(1,1))
+    p1, origin1 = extract_grayscale_patches( noise_img, (patch_size,patch_size), stride=(1,1))
+    x, y = (patch2vector(t) for t in (p, p1))
+    #train = datasetconv(x=x,y=y)
+    return x,y,origin,img,noise_img
+    
 
 
+    
 def patchset2image(vector,origin):
     patch=vector2patch(vector)
     denoised_image,wgt=reconstruct_from_grayscale_patches( patch, origin, epsilon=1e-12 )
     return denoised_image
+    
+    
+    
+def patch2vector(p):
+    clean=np.zeros((p.shape[1]*p.shape[1],p.shape[0]))
+    for i in np.arange(0,p.shape[0],1):
+        clean[:,i] = np.reshape(p[i,:,:],[p.shape[1]*p.shape[1]])
+    return clean
 
 
-
-def patch2vector(p,p1):
-    clean = np.reshape(p,[p.shape[1]*p.shape[1],p.shape[0]])
-    noise = np.reshape(p1,[p1.shape[1]*p1.shape[1],p1.shape[0]])
-    x=clean/255
-    y=noise/255
+def datasetconv(x,y):
     return Dataset(x=x,y=y)
 
-
 def vector2patch(p):
-    denoised = np.reshape(p,[int(p.shape[1]),int(np.sqrt(p.shape[0])),int(np.sqrt(p.shape[0]))])
-    d=denoised*255
-    return d
-
-
+    denoised=np.zeros((p.shape[1],int(np.sqrt(p.shape[0])),int(np.sqrt(p.shape[0]))))
+    for i in np.arange(0,p.shape[1],1):
+        denoised[i,:,:] = np.reshape(p[:,i],[int(np.sqrt(p.shape[0])),int(np.sqrt(p.shape[0]))])
+    return denoised
 
 ###Image to patches and vice versa     [Code source :http://jamesgregson.ca/extract-image-patches-in-python.html]
 def extract_grayscale_patches( img, shape, offset=(0,0), stride=(1,1) ):

@@ -32,8 +32,8 @@ def basic():
     batch_size = 1
 
     transform_type = 'identity'
-    k = 64
     transform_scale = 1e-2
+    transform_opts = dict()
 
     num_testing = 50
     seed = 0
@@ -48,11 +48,16 @@ def basic_patch():
 def baseline(n, signal_type):
     learning_rate = 0.0
     num_steps = 0
+    transform_scale = 1.0
 
     if signal_type == 'piecewise_constant':
         transform_type = 'TV'
+        transform_opts = dict()
+
     elif signal_type == 'DCT-sparse':
         transform_type = 'DCT'
+        transform_opts = dict()
+
     else:
         raise ValueError(signal_type)
 

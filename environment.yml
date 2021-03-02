@@ -7,6 +7,7 @@ dependencies:
   - matplotlib=3.3.1
   - pymongo=3.11.2
   - mongodb=4.0.3
+  - seaborn>=0.11.1
   - pip:
       - -e src
       - cvxpylayers==0.1.4

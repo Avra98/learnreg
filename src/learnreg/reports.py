@@ -9,8 +9,11 @@ import jsonpickle.ext.numpy as jsonpickle_numpy
 from argparse import Namespace
 import numpy as np
 import scipy.optimize
+import seaborn as sns
 
 import learnreg as lr
+
+transform_cmap = sns.diverging_palette(250, 30, l=65, center="dark", as_cmap=True)
 
 jsonpickle_numpy.register_handlers()
 
@@ -128,13 +131,14 @@ def show_W_patch(W):
     vmax = W.max()
     for i in range(k):
         ax = axes.flatten()[i]
-        ax.imshow(
+        im = ax.imshow(
             W[i, :].T.reshape(p, p),
-            vmin=vmin, vmax=vmax, cmap='BrBG')
+            vmin=vmin, vmax=vmax, cmap=transform_cmap)
 
     for ax in axes.flatten():
         ax.axis('off')
-    fig.tight_layout()
+
+    fig.colorbar(im, ax=axes, location='bottom')
     return fig, axes
 
 
