@@ -6,16 +6,13 @@ import numpy as np
 import scipy
 import torch
 import collections
-import functools
 import random
 import math
 import shortuuid
 import time
 import pathlib
-import cv2
+import imageio
 import learnreg.opt as opt
-import math 
-from math import log10, sqrt 
 
 
 
@@ -45,12 +42,12 @@ def main(signal_type,
 
     A = make_forward_model(forward_model_type, n)
     train = make_dataset(signal_type, A, noise_sigma, num_training)
-    
+
     if signal_type == 'image_patch':
         test = train
     else :
         test = make_dataset(signal_type, A, noise_sigma, num_testing)
-            
+
     W = make_transform(transform_type, n, transform_scale, **transform_opts)
 
     solver = opt.CvxpySolver(A, W.shape[0], sign_threshold)
@@ -58,12 +55,12 @@ def main(signal_type,
     W = do_learning(
         A, W, train, solver.eval_upper,
         learning_rate, num_steps, batch_size, print_interval=100)
-    
+
     if signal_type == 'image_patch':
         test.x = test.x[:,:num_testing]
         test.y = test.y[:,:num_testing]
         fig, ax = reports.show_W_patch(W)
-        
+
 
     beta = find_optimal_beta(A, test.x, test.y, W)
 
@@ -81,7 +78,7 @@ def main(signal_type,
         return W
         #return MSE, beta, W
 
-    
+
 def make_dataset(signal_type, A, noise_sigma, num_signals, signal_opts=None):
     oned_signal_types = ['piecewise_constant', 'DCT-sparse',
                        'constant_patch']
@@ -92,15 +89,15 @@ def make_dataset(signal_type, A, noise_sigma, num_signals, signal_opts=None):
         x = make_signal(signal_type, A.shape[1], num_signals=num_signals,
                     signal_opts=signal_opts)
         y = make_measurement(x, A, noise_sigma)
-        
+
     elif signal_type in twod_signal_types:
         [x, y,_,_,_] = image2patchset(noise_sigma,patch_size,filename='barbara.png')
-        
+
     else:
         raise ValueError(signal_type)
-        
+
     train = datasetconv(x,y)
-    return train    
+    return train
 
 
 ##Driver code for training patches from images. Denoising is on the same patches of the images
@@ -113,7 +110,7 @@ def main_image(filename,patch_size,
          learning_rate,
          num_steps,
          sign_threshold,
-         batch_size,      
+         batch_size,
          _run=None):
 
     np.random.seed(SEED)
@@ -128,13 +125,13 @@ def main_image(filename,patch_size,
     #W = do_learning(A, beta, W, train, learning_rate, num_steps, print_interval, sign_threshold, logger=_run)
 
     solver = opt.CvxpySolver(A, W.shape[0], sign_threshold)
-    
+
     W=do_learning(
       A, W, train, solver.eval_upper,
       learning_rate, num_steps, batch_size, print_interval=100)
 
 
-    
+
     beta_W = 1.0
     denoised=np.zeros((patch_size**2,train.x.shape[1]))
     #beta_W = find_optimal_beta(A, test.x, test.y, W, 1e2).item()
@@ -152,22 +149,22 @@ def main_image(filename,patch_size,
          return denoised_image,W,img,noise_img
 
 
- 
 
-    
+
+
 def test_image(testnoise,W,beta,images = ['cameraman.tif','house.tif'
             ,'jetplane.tif','lake.tif'
             ,'livingroom.tif','mandril_gray.tif'
             ,'peppers_gray.tif'
             ,'pirate.tif','walkbridge.tif'
             ,'woman_blonde.tif','woman_darkhair.tif']):
-    
+
     d2=np.zeros([512,512,len(images)])
     c2=np.zeros([512,512,len(images)])
     n2=np.zeros([512,512,len(images)])
     pn2=np.zeros([1,len(images)])
     pd2=np.zeros([1,len(images)])
-    
+
     for i in range(len(images)):
         [d,c,n,pn,pd]=denoise_with_W(testnoise,W,beta,images[i])
         d2[:,:,i]=d
@@ -175,7 +172,7 @@ def test_image(testnoise,W,beta,images = ['cameraman.tif','house.tif'
         n2[:,:,i]=n
         pn2[:,i]=pn
         pd2[:,i]=pd
-        
+
     for i in range(0,len(images)):
         fig, (ax1, ax2,ax3) = plt.subplots(1, 3,figsize=(15,15))
         ax1.imshow(c2[:,:,i],'gray')
@@ -185,13 +182,13 @@ def test_image(testnoise,W,beta,images = ['cameraman.tif','house.tif'
         ax3.imshow(d2[:,:,i],'gray')
         ax3.set_title('Recon image')
         plt.pause(0.2)
-    return d2,c2,n2,pn2,pd2   
-            
-    
-    
-    
-    
-    
+    return d2,c2,n2,pn2,pd2
+
+
+
+
+
+
 # problem setup
 
 
@@ -307,7 +304,7 @@ def do_learning(A, W0, train, eval_upper_fcn,
     checkpoint_frequency: save results every X seconds
     """
 
-    outpath = pathlib.Path(checkpoint_dir, 'W_' +  shortuuid.uuid())    
+    outpath = pathlib.Path(checkpoint_dir, 'W_' + shortuuid.uuid())
     if checkpoint_frequency is not None:
         print(f'Saving to {outpath}')
         time_last_save = time.time()
@@ -362,7 +359,7 @@ def do_learning(A, W0, train, eval_upper_fcn,
                 checkpoint_frequency is not None and
                 time.time() - time_last_save > checkpoint_frequency
         ):
-            np.save(outpath, W)
+            np.save(pathlib.Path(str(outpath) + f'_{step}'), W)
             time_last_save = time.time()
 
     # save the final W
@@ -388,12 +385,12 @@ def denoise_with_W(noise_sigma,W,beta,image_file):
     return denoised_image,image,noise_img,psnr_n,psnr_d
 
 
-def PSNR(original, compressed): 
-    mse = np.mean((original - compressed) ** 2) 
+def PSNR(original, compressed):
+    mse = np.mean((original - compressed) ** 2)
     if(mse == 0):
         return 100
     max_pixel = 1.0
-    psnr = 20 * np.log10(max_pixel / sqrt(mse)) 
+    psnr = 20 * np.log10(max_pixel / sqrt(mse))
     return psnr
 
 
@@ -639,7 +636,7 @@ def make_conv(h, n):
 
 
 def image2patchset(noise_sigma,patch_size,filename):
-    img = cv2.imread(filename).sum(2)/3
+    img = imageio.imread(filename).sum(2)/3
     img=img/255
     noise_sigma=noise_sigma/255
     noise_img = img + np.random.normal(0,noise_sigma,[img.shape[0],img.shape[1]])
@@ -648,17 +645,17 @@ def image2patchset(noise_sigma,patch_size,filename):
     x, y = (patch2vector(t) for t in (p, p1))
     #train = datasetconv(x=x,y=y)
     return x,y,origin,img,noise_img
-    
 
 
-    
+
+
 def patchset2image(vector,origin):
     patch=vector2patch(vector)
     denoised_image,wgt=reconstruct_from_grayscale_patches( patch, origin, epsilon=1e-12 )
     return denoised_image
-    
-    
-    
+
+
+
 def patch2vector(p):
     clean=np.zeros((p.shape[1]*p.shape[1],p.shape[0]))
     for i in np.arange(0,p.shape[0],1):
