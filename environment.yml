@@ -8,7 +8,6 @@ dependencies:
   - pymongo=3.11.2
   - mongodb=4.0.3
   - seaborn>=0.11.1
-  - conda-forge::opencv
   - imageio
   - pip:
       - -e src
