@@ -169,7 +169,7 @@ def solve_lasso_cvxpy(A, y, beta, W, prob=None):
         prob = make_cvxpy_problem(A, W.shape[0])
 
     for i in range(y.shape[1]):
-        x_hat[:, i] = solve_cvxpy_problem(prob, y[:,[i]], beta, W)[:, 0]
+        x_hat[:, i] = solve_cvxpy_problem(prob, y[:, [i]], beta, W)[:, 0]
 
     return x_hat
 

@@ -336,6 +336,7 @@ def do_learning(A, W0, train, eval_upper_fcn,
             x_cur = x[:, [idx]]
             y_cur = y[:, [idx]]
 
+            # solve lasso
             loss_cur, grad_cur = eval_upper_fcn(A, y_cur, W, x_cur,
                                                 requires_grad=True)
             MSE_history[idx] = loss_cur
