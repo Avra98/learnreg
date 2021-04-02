@@ -31,9 +31,9 @@ def basic():
     num_training = 10000
     batch_size = 1
 
-    transform_type = 'identity'
+    transform_type = 'random'
     transform_scale = 1e-2
-    transform_opts = dict()
+    transform_opts = dict(k=n)
 
     num_testing = 50
     seed = 0
@@ -57,6 +57,9 @@ def baseline(n, signal_type):
     elif signal_type == 'DCT-sparse':
         transform_type = 'DCT'
         transform_opts = dict()
+
+    elif signal_type == 'constant_patch':
+        transform_type = 'TV-2D'
 
     else:
         raise ValueError(signal_type)

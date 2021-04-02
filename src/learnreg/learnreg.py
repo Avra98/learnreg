@@ -3,7 +3,7 @@ Assume everything is a numpy array.
 Try to keep everything a numpy array.
 """
 import numpy as np
-import scipy
+import scipy.fft
 import torch
 import collections
 import random
