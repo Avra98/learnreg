@@ -141,13 +141,18 @@ def plot_recon(x_gt, y, x_star, ax=None, **kwargs):
 
     return fig, ax
 
+def show_W(W, title=None):
+    return show_Ws(W, titles=[title])
 
 def show_Ws(*Ws, titles=None):
     if titles is None:
         titles = len(Ws) * [None]
-    fig, axes = plt.subplots(1, len(Ws), **sp_args)
-    for ax, W, title in zip(axes, Ws, titles):
-        ax.imshow(W, cmap=transform_cmap)
+    fig, axes = plt.subplots(1, len(Ws), squeeze=0, **sp_args)
+
+    print(axes)
+
+    for ax, W, title in zip(axes.flatten(), Ws, titles):
+        ax.imshow(W, cmap=transform_cmap, vmin=-np.max(np.abs(W)), vmax=np.max(np.abs(W)))
         if title is not None:
             ax.set_title(title)
     fig.tight_layout()
@@ -159,8 +164,9 @@ def show_W_patch(W):
     m = int(np.ceil(np.sqrt(k)))  # determine number of subplots
     fig, axes = plt.subplots(m, m, constrained_layout=True, **sp_args)
 
-    vmin = W.min()
-    vmax = W.max()
+    biggest_val = np.max(np.abs(W))
+    vmin = -biggest_val
+    vmax = biggest_val
     for i in range(k):
         ax = axes.flatten()[i]
         im = ax.imshow(
