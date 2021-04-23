@@ -68,7 +68,7 @@ def solve_cvxpy_problem(prob, y, beta, W):
     prob.y.value = y
     prob.W.value = beta * W
 
-    prob.solve()
+    prob.solve(eps_abs=1e-4)
     return prob.x.value
 
 
