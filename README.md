@@ -19,3 +19,7 @@
   * `ssh -L 27017:localhost:27017 -N -p 9998 localhost -l mccann13 &`
   * `omniboard`
 * point browser to `localhost:9000`
+
+
+## Rebuttal experiments
+Refer to the rebuttal experiment folder for the experiments performed for ICASSP rebuttal. 
