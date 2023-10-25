@@ -35,7 +35,7 @@ python scripts/1D_learn.py --learning_rate 0.001 --num_steps 1e6 --sign_threshol
 
 Run the following command to learn the transform on 2D images:
 
-python script_name.py --filename "barbara_gray.bmp" --patch_size 8 --forward_model_type identity --noise_sigma 0.01 --transform_type identity --transform_scale 0.01 --SEED 0 --learning_rate 0.001 --num_steps 100000 --sign_threshold 0.0001 --batch_size 5
+python scripts/example_image.py --filename "barbara_gray.bmp" --patch_size 8 --forward_model_type identity --noise_sigma 0.01 --transform_type identity --transform_scale 0.01 --SEED 0 --learning_rate 0.001 --num_steps 100000 --sign_threshold 0.0001 --batch_size 5
 
 
 ## Gradients and Time Comparisons
@@ -45,4 +45,16 @@ python script_name.py --filename "barbara_gray.bmp" --patch_size 8 --forward_mod
 Run the notebook `scripts/check_gradients.ipynb` for gradient and time comparisons with autodiff solvers.
 
 
+## Citation and Paper
 
+This work has been published in [ICASSP-2022](https://2022.ieeeicassp.org/) and [SIAM Journal on Imaging Sciences](https://www.siam.org/journals/siims.php). You can read the full paper on [arXiv](https://arxiv.org/abs/2207.08939).
+
+To cite this work, please use the following BibTeX entry:
+
+```bibtex
+@article{ghosh2022learning,
+  title={Learning Sparsity-Promoting Regularizers using Bilevel Optimization},
+  author={Ghosh, Avrajit and McCann, Michael T and Mitchell, Madeline and Ravishankar, Saiprasad},
+  journal={arXiv preprint arXiv:2207.08939},
+  year={2022}
+}
