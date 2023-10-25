@@ -44,7 +44,5 @@ python script_name.py --filename "barbara_gray.bmp" --patch_size 8 --forward_mod
 
 Run the notebook `scripts/check_gradients.ipynb` for gradient and time comparisons with autodiff solvers.
 
-## Adding Images to README
-To add images to this README, upload the image files to your repository and then use the following Markdown syntax: `![Description](path/to/image)`
 
 
