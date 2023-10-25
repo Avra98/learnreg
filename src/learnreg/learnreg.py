@@ -13,6 +13,8 @@ import time
 import pathlib
 import imageio
 import learnreg.opt as opt
+import learnreg.reports as reports
+import matplotlib.pyplot as plt
 
 
 
@@ -25,7 +27,6 @@ def main(signal_type,
          forward_model_type,
          noise_sigma,
          transform_type,
-         transform_opts,
          transform_scale,
          learning_rate,
          num_steps,
@@ -39,7 +40,6 @@ def main(signal_type,
 
 
     """
-
     A = make_forward_model(forward_model_type, n)
     train = make_dataset(signal_type, A, noise_sigma, num_training)
 
@@ -48,7 +48,7 @@ def main(signal_type,
     else :
         test = make_dataset(signal_type, A, noise_sigma, num_testing)
 
-    W = make_transform(transform_type, n, transform_scale, **transform_opts)
+    W = make_transform(transform_type, n, transform_scale)
 
     solver = opt.CvxpySolver(A, W.shape[0], sign_threshold)
 
@@ -84,7 +84,8 @@ def make_dataset(signal_type, A, noise_sigma, num_signals, signal_opts=None):
                        'constant_patch']
     twod_signal_types = ['image_patch']
     patch_size= int(np.sqrt(A.shape[1]))
-
+    #print(num_signals)
+    print(f"In make_dataset the training data is {num_signals}.")
     if signal_type in oned_signal_types:
         x = make_signal(signal_type, A.shape[1], num_signals=num_signals,
                     signal_opts=signal_opts)
@@ -117,8 +118,8 @@ def main_image(filename,patch_size,
     n=patch_size**2
     k=n-1
     A = make_forward_model(forward_model_type, n)
-    train,origin,img,noise_img=image2patchset(noise_sigma,patch_size,filename='barbara.png')
-    W = make_transform(transform_type, n, k, transform_scale)
+    train,origin,img,noise_img=image2patchset(noise_sigma,patch_size,filename='barbara_gray.bmp')
+    W = make_transform(transform_type, n, transform_scale)
     W0 = W.copy()
     beta = 1.0
     print_interval = 100
@@ -195,11 +196,11 @@ def test_image(testnoise,W,beta,images = ['cameraman.tif','house.tif'
 def make_signal(sig_type, n, num_signals, signal_opts=None):
     if signal_opts is None:
         signal_opts = {}
-
+    print(f"In make_signal, the training data is {num_signals}.")
     if sig_type == 'piecewise_constant':
         sigs = make_piecewise_const_signal(n, num_signals, **signal_opts)
     elif sig_type == 'DCT-sparse':
-        sigs = make_DCT_signal(n, num_signals, **signal_opts)
+        sigs = make_DCT_signal(n, num_signals)
     elif sig_type == 'constant_patch':
         sigs = make_constant_patch_signal(n, num_signals, **signal_opts)
     else:
@@ -247,7 +248,7 @@ def make_piecewise_const_signal(n, num_signals=1, num_jumps=None):
 
     return sigs
 
-def make_DCT_signal(n, nonzero_freq=0.1, num_signals=1):
+def make_DCT_signal(n, num_signals, nonzero_freq=0.1):
     """
     make signals that are well-sparsified by the DCT,
 
@@ -256,6 +257,7 @@ def make_DCT_signal(n, nonzero_freq=0.1, num_signals=1):
     W = lr.make_transform('DCT', n)
     W @ sigs
     """
+    print(f"In make_DCT {num_signals}.")
     support = np.random.rand(n, num_signals) <= nonzero_freq
     coeffs = 2 * (np.random.rand(n, num_signals) - 0.5) * support
     sigs = scipy.fft.idct(coeffs, axis=0, norm="ortho")
@@ -294,7 +296,7 @@ def minibatcher(N, batch_size):
 def do_learning(A, W0, train, eval_upper_fcn,
                 learning_rate, num_steps, batch_size, print_interval=1,
                 checkpoint_dir='checkpoints',
-                checkpoint_frequency=None):
+                checkpoint_frequency=600):
     """
 
 
@@ -305,11 +307,13 @@ def do_learning(A, W0, train, eval_upper_fcn,
     """
 
     outpath = pathlib.Path(checkpoint_dir, 'W_' + shortuuid.uuid())
+    outpath.parent.mkdir(parents=True, exist_ok=True)
     if checkpoint_frequency is not None:
         print(f'Saving to {outpath}')
         time_last_save = time.time()
 
     x, y = train
+    print(x.shape,y.shape)
     train_length = x.shape[1]
 
     W = W0.copy()
@@ -317,6 +321,7 @@ def do_learning(A, W0, train, eval_upper_fcn,
     # setup main loop
     MSE_history = torch.full((train_length,), np.nan)
     shuffler = minibatcher(train_length, batch_size)
+    #print(train_length)
     epoch = 0
 
     print(f'{"step":12s}{"epoch":6s}'
@@ -328,6 +333,7 @@ def do_learning(A, W0, train, eval_upper_fcn,
             batch_indices = next(shuffler)
         except StopIteration:
             shuffler = minibatcher(train_length, batch_size)
+            #batch_indices = next(shuffler) 
             epoch += 1
 
         # compute batch gradient
@@ -361,6 +367,16 @@ def do_learning(A, W0, train, eval_upper_fcn,
                 time.time() - time_last_save > checkpoint_frequency
         ):
             np.save(pathlib.Path(str(outpath) + f'_{step}'), W)
+                # Plotting the matrix W
+            plt.imshow(W, cmap='viridis', aspect='auto')
+            plt.colorbar()
+            plt.title(f'Matrix W at Step {step}')
+            save_path_fig = pathlib.Path(str(outpath) + f'_{step}.png')
+            
+            # Save the figure
+            plt.savefig(save_path_fig)
+            
+            plt.close()  # Close the figure to free up resources
             time_last_save = time.time()
 
     # save the final W
@@ -577,7 +593,7 @@ def make_forward_model(forward_model_type, n):
 
 
 
-def make_transform(transform_type, n, scale=1.0, **opts):
+def make_transform(transform_type, n, scale=1.0):
     if transform_type == 'identity':
         W = np.eye(n, n)
         W = W - W.mean(axis=1, keepdims=True)
@@ -588,8 +604,8 @@ def make_transform(transform_type, n, scale=1.0, **opts):
     elif transform_type == 'DCT':
         W = scipy.fft.dct(np.eye(n), axis=0, norm='ortho')
 
-    elif transform_type == 'random':
-        W = np.random.randn(opts['k'], n)
+    # elif transform_type == 'random':
+    #     W = np.random.randn(opts['k'], n)
 
     elif transform_type == 'TV-2D':
         m = math.isqrt(n)
@@ -637,15 +653,16 @@ def make_conv(h, n):
 
 
 def image2patchset(noise_sigma,patch_size,filename):
-    img = imageio.imread(filename).sum(2)/3
+    #img = imageio.imread(filename).sum(2)/3
+    img = imageio.imread(filename)
     img=img/255
     noise_sigma=noise_sigma/255
     noise_img = img + np.random.normal(0,noise_sigma,[img.shape[0],img.shape[1]])
     p, origin = extract_grayscale_patches( img, (patch_size,patch_size), stride=(1,1))
     p1, origin1 = extract_grayscale_patches( noise_img, (patch_size,patch_size), stride=(1,1))
     x, y = (patch2vector(t) for t in (p, p1))
-    #train = datasetconv(x=x,y=y)
-    return x,y,origin,img,noise_img
+    train = datasetconv(x=x,y=y)
+    return train,origin,img,noise_img
 
 
 

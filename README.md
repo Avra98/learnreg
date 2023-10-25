@@ -12,14 +12,41 @@
 ## Working with the code
 * `conda activate learnreg1d`
 
-## mongodb
-* on digilink: `mongod --dbpath monogodb/`
-* on local machine:
-  * `ssh -L 9998:sai.dhcp.egr.msu.edu:22 -N mccann13@scully.egr.msu.edu &`
-  * `ssh -L 27017:localhost:27017 -N -p 9998 localhost -l mccann13 &`
-  * `omniboard`
-* point browser to `localhost:9000`
+## Learning the transform on 1D signals
+python scripts/1D_learn.py \
+  --learning_rate 0.001 \
+  --num_steps 1e6 \
+  --sign_threshold 0.0001 \
+  --signal_type piecewise_constant \
+  --n 64 \
+  --noise_sigma 0.01 \
+  --forward_model_type identity \
+  --num_training 10000 \
+  --transform_type identity \
+  --transform_scale 0.01 \
+  --num_testing 5 \
+  --seed 0 \
+  --batch_size 5
+
+## Learning the transform on 2D images
+  
+python script_name.py \
+  --filename "barbara_gray.bmp" \
+  --patch_size 8 \
+  --forward_model_type identity \
+  --noise_sigma 0.01 \
+  --transform_type identity \
+  --transform_scale 0.01 \
+  --SEED 0 \
+  --learning_rate 0.001 \
+  --num_steps 100000 \
+  --sign_threshold 0.0001 \
+  --batch_size 5
 
 
-## Rebuttal experiments
-Refer to the rebuttal experiment folder for the experiments performed for ICASSP rebuttal. 
+## Gradients and time comparisons with autodiff solvers
+
+Run the notebook scripts/check_gradients.ipynb
+
+
+
