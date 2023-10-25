@@ -1,8 +1,6 @@
 """
 compare cvxpy  and hand gradient to numerical gradient
 
-michael.thompson.mccann@gmail.com
-2020-02-09
 
 """
 
@@ -13,6 +11,7 @@ import torch
 
 import learnreg as lr
 import learnreg.opt as opt
+#import diffcp
 
 n = 32
 signal_type = 'piecewise_constant'
@@ -22,7 +21,7 @@ k = n - 1  # just to keep track of shapes
 forward_model_type = 'identity'
 noise_sigma = 0.1
 
-transform_type = 'random'
+transform_type = 'TV'
 transform_scale = 1e-1
 
 threshold = 1e-6
@@ -32,8 +31,8 @@ random_seed = 1
 plt.close('all')
 
 np.random.seed(random_seed)
-A = lr.make_foward_model(forward_model_type, n)
-W = lr.make_transform(transform_type, n, k, transform_scale)
+A = lr.make_forward_model(forward_model_type, n)
+W = lr.make_transform(transform_type, n, transform_scale)
 x, y = lr.make_dataset(signal_type, A, noise_sigma, num_signals)
 
 

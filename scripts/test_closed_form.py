@@ -15,13 +15,16 @@ SEED = 0
 # init
 torch.manual_seed(SEED)  # make repeatable
 
+
 # make TV
-W = lr.make_TV(n)
-W = W + 0.001 * torch.randn_like(W)
+#W = lr.make_TV(n)
+W = lr.make_transform("TV", n, scale=1.0)
+print(W)
+#W = W + 0.001 * torch.randn_like(W)
 
 # make dataset
 A = torch.eye(n,n)
-x, y = lr.make_dataset(A, num_signals=1, sigma=sigma)
+x, y = lr.make_dataset(A, num_signals=1, noise_sigma=sigma)
 
 beta = lr.find_optimal_beta(A, x, y, W, upper=2)
 

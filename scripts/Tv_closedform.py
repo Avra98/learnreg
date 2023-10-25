@@ -38,9 +38,7 @@ fig.show()
 z = TV @ x
 [S0,Sp,s]=learnreg.find_sign_pattern(z, threshold=sign_thresh)  ##Thresholds off values less than threshold in z.
 
-##Observation: Even for direct closed form reconstruction, threshold and lamd is of paramount importance.
-##Threshold is set at an optimum. This code is important because it shows the sensitivity of threshold and lamd in
-##direct reconstruction. This is one of possible reasons the graident method may not be working.
+
 
 ##Use the closed form expression
 x_cl=learnreg.closed_form(S0, Sp, s, TV, beta_opt, y)

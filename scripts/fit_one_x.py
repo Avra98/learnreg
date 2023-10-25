@@ -2,7 +2,10 @@ import matplotlib.pyplot as plt
 import torch
 import collections
 
-import learnreg
+import learnreg.opt
+import learnreg.reports
+import learnreg.configs
+import learnreg.nn
 sigma = 5e-1
 
 torch.manual_seed(0)  # make repeatable
