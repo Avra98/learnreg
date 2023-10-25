@@ -1,4 +1,4 @@
-# Learning Sparsifying Transforms (1D)
+# Learning Sparsifying Transforms using closed-form gradients
 
 ## Table of Contents
 - One-time Setup
